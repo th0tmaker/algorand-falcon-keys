@@ -16,6 +16,5 @@ fn main() {
         .define("FALCON_FPEMU", "1")   // use integer FP emulation
         .define("FALCON_FMA", "0")     // disable fused multiply-add
         .define("FALCON_AVX2", "0")    // disable AVX2 intrinsics
-        .opt_level(3)
         .compile("falcon_det1024");
 }
