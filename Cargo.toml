@@ -8,6 +8,7 @@ build = "build.rs"
 cc = "1.0"
 
 [dependencies]
+zeroize = { version = "1", features = ["derive"] }
 
 
 

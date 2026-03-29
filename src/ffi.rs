@@ -16,13 +16,13 @@ unsafe extern "C" {
     pub fn shake256_init_prng_from_seed(
         sc: *mut Shake256Context,
         seed: *const c_void,
-        seed_len: usize,
+        seed_len: usize
     );
 
     pub fn falcon_det1024_keygen(
         rng: *mut Shake256Context,
         privkey: *mut c_void,
-        pubkey: *mut c_void,
+        pubkey: *mut c_void
     ) -> c_int;
 
     pub fn falcon_det1024_sign_compressed(
@@ -30,7 +30,7 @@ unsafe extern "C" {
         sig_len: *mut usize,
         privkey: *const c_void,
         data: *const c_void,
-        data_len: usize,
+        data_len: usize
     ) -> c_int;
 
     pub fn falcon_det1024_verify_compressed(
@@ -38,7 +38,48 @@ unsafe extern "C" {
         sig_len: usize,
         pubkey: *const c_void,
         data: *const c_void,
+        data_len: usize
+    ) -> c_int;
+
+    pub fn falcon_det1024_get_salt_version(
+        sig: *const c_void
+    ) -> c_int;
+
+    pub fn falcon_det1024_convert_compressed_to_ct(
+        sig_ct: *mut c_void,
+        sig_compressed: *const c_void,
+        sig_compressed_len: usize
+    ) -> c_int;
+
+    pub fn falcon_det1024_verify_ct(
+        sig: *const c_void,
+        pubkey: *const c_void,
+        data: *const c_void,
+        data_len: usize
+    ) -> c_int;
+
+    pub fn falcon_det1024_pubkey_coeffs(
+        h: *mut u16,
+        pubkey: *const c_void
+    ) -> c_int;
+
+    pub fn falcon_det1024_hash_to_point_coeffs(
+        c: *mut u16,
+        data: *const c_void,
         data_len: usize,
+        salt_version: u8
+    );
+
+    pub fn falcon_det1024_s2_coeffs(
+        s2: *mut i16,
+        sig: *const c_void
+    ) -> c_int;
+
+    pub fn falcon_det1024_s1_coeffs(
+        s1: *mut i16,
+        h: *const u16,
+        c: *const u16,
+        s2: *const i16
     ) -> c_int;
 }
 
@@ -54,14 +95,10 @@ mod tests {
     // Helper: seed a PRNG, generate a keypair, return (privkey, pubkey).
     unsafe fn make_keypair(seed: &[u8]) -> ([u8; FALCON_DET1024_PRIVKEY_SIZE], [u8; FALCON_DET1024_PUBKEY_SIZE]) {
         let mut rng = Shake256Context::default();
-        unsafe {
-            shake256_init_prng_from_seed(&mut rng, seed.as_ptr() as *const c_void, seed.len());
-        }
+        unsafe { shake256_init_prng_from_seed(&mut rng, seed.as_ptr() as *const c_void, seed.len()) };
         let mut privkey = [0u8; FALCON_DET1024_PRIVKEY_SIZE];
         let mut pubkey = [0u8; FALCON_DET1024_PUBKEY_SIZE];
-        unsafe {
-            falcon_det1024_keygen(&mut rng, privkey.as_mut_ptr() as *mut c_void, pubkey.as_mut_ptr() as *mut c_void);
-        }
+        unsafe { falcon_det1024_keygen(&mut rng, privkey.as_mut_ptr() as *mut c_void, pubkey.as_mut_ptr() as *mut c_void) };
         (privkey, pubkey)
     }
 
@@ -69,16 +106,26 @@ mod tests {
     unsafe fn sign(privkey: &[u8; FALCON_DET1024_PRIVKEY_SIZE]) -> ([u8; FALCON_DET1024_SIG_COMPRESSED_MAXSIZE], usize) {
         let mut sig = [0u8; FALCON_DET1024_SIG_COMPRESSED_MAXSIZE];
         let mut sig_len = 0usize;
-        unsafe {
-            falcon_det1024_sign_compressed(
-                sig.as_mut_ptr() as *mut c_void,
-                &mut sig_len,
-                privkey.as_ptr() as *const c_void,
-                TEST_MSG.as_ptr() as *const c_void,
-                TEST_MSG.len(),
-            );
-        }
+        unsafe { falcon_det1024_sign_compressed(
+            sig.as_mut_ptr() as *mut c_void,
+            &mut sig_len,
+            privkey.as_ptr() as *const c_void,
+            TEST_MSG.as_ptr() as *const c_void,
+            TEST_MSG.len(),
+        ) };
         (sig, sig_len)
+    }
+
+    // Helper: sign TEST_MSG and convert to CT format.
+    unsafe fn sign_and_convert_to_ct(privkey: &[u8; FALCON_DET1024_PRIVKEY_SIZE]) -> [u8; FALCON_DET1024_SIG_CT_SIZE] {
+        let (sig, sig_len) = unsafe { sign(privkey) };
+        let mut sig_ct = [0u8; FALCON_DET1024_SIG_CT_SIZE];
+        unsafe { falcon_det1024_convert_compressed_to_ct(
+            sig_ct.as_mut_ptr() as *mut c_void,
+            sig.as_ptr() as *const c_void,
+            sig_len,
+        ) };
+        sig_ct
     }
 
     #[test]
@@ -159,5 +206,165 @@ mod tests {
             )
         };
         assert_ne!(ret_bad_key, 0);
+    }
+
+    #[test]
+    fn falcon_det1024_get_salt_version_smoke() {
+        let (privkey, _) = unsafe { make_keypair(TEST_SEED) };
+        let (sig, _) = unsafe { sign(&privkey) };
+
+        let salt_version = unsafe {
+            falcon_det1024_get_salt_version(sig.as_ptr() as *const c_void)
+        };
+        assert_eq!(salt_version, FALCON_DET1024_CURRENT_SALT_VERSION as i32);  // expect version 0
+    }
+
+    #[test]
+    fn falcon_det1024_convert_compressed_to_ct_smoke() {
+        let (privkey, _) = unsafe { make_keypair(TEST_SEED) };
+        let sig_ct = unsafe { sign_and_convert_to_ct(&privkey) };
+
+        assert_ne!(sig_ct, [0u8; FALCON_DET1024_SIG_CT_SIZE]);  // ct sig was written
+        assert_eq!(sig_ct[0], FALCON_DET1024_SIG_CT_HEADER);  // correct CT header byte
+    }
+
+    #[test]
+    fn falcon_det1024_verify_ct_smoke() {
+        let (privkey, pubkey) = unsafe { make_keypair(TEST_SEED) };
+        let sig_ct = unsafe { sign_and_convert_to_ct(&privkey) };
+
+        // valid CT sig + correct pubkey + correct msg -> 0
+        let ret = unsafe {
+            falcon_det1024_verify_ct(
+                sig_ct.as_ptr() as *const c_void,
+                pubkey.as_ptr() as *const c_void,
+                TEST_MSG.as_ptr() as *const c_void,
+                TEST_MSG.len(),
+            )
+        };
+        assert_eq!(ret, 0);
+
+        // valid CT sig + correct pubkey + wrong msg -> non-zero
+        let ret_bad_msg = unsafe {
+            falcon_det1024_verify_ct(
+                sig_ct.as_ptr() as *const c_void,
+                pubkey.as_ptr() as *const c_void,
+                ALT_SEED.as_ptr() as *const c_void,
+                ALT_SEED.len(),
+            )
+        };
+        assert_ne!(ret_bad_msg, 0);
+
+        // valid CT sig + wrong pubkey + correct msg -> non-zero
+        let (_, wrong_pubkey) = unsafe { make_keypair(ALT_SEED) };
+        let ret_bad_key = unsafe {
+            falcon_det1024_verify_ct(
+                sig_ct.as_ptr() as *const c_void,
+                wrong_pubkey.as_ptr() as *const c_void,
+                TEST_MSG.as_ptr() as *const c_void,
+                TEST_MSG.len(),
+            )
+        };
+        assert_ne!(ret_bad_key, 0);
+    }
+
+    #[test]
+    fn falcon_det1024_pubkey_coeffs_smoke() {
+        let (_, pubkey) = unsafe { make_keypair(TEST_SEED) };
+
+        let mut h = [0u16; FALCON_DET1024_N];
+        let ret = unsafe {
+            falcon_det1024_pubkey_coeffs(h.as_mut_ptr(), pubkey.as_ptr() as *const c_void)
+        };
+
+        assert_eq!(ret, 0);
+        assert_ne!(h, [0u16; FALCON_DET1024_N]);  // coefficients were written
+    }
+
+    #[test]
+    fn falcon_det1024_hash_to_point_coeffs_smoke() {
+        let mut c = [0u16; FALCON_DET1024_N];
+        unsafe {
+            falcon_det1024_hash_to_point_coeffs(
+                c.as_mut_ptr(),
+                TEST_MSG.as_ptr() as *const c_void,
+                TEST_MSG.len(),
+                FALCON_DET1024_CURRENT_SALT_VERSION,
+            );
+        }
+
+        assert_ne!(c, [0u16; FALCON_DET1024_N]);  // coefficients were written
+
+        // same inputs -> same output (deterministic)
+        let mut c2 = [0u16; FALCON_DET1024_N];
+        unsafe {
+            falcon_det1024_hash_to_point_coeffs(
+                c2.as_mut_ptr(),
+                TEST_MSG.as_ptr() as *const c_void,
+                TEST_MSG.len(),
+                FALCON_DET1024_CURRENT_SALT_VERSION,
+            );
+        }
+        assert_eq!(c, c2);
+
+        // different msg -> different coefficients
+        let mut c3 = [0u16; FALCON_DET1024_N];
+        unsafe {
+            falcon_det1024_hash_to_point_coeffs(
+                c3.as_mut_ptr(),
+                ALT_SEED.as_ptr() as *const c_void,
+                ALT_SEED.len(),
+                FALCON_DET1024_CURRENT_SALT_VERSION,
+            );
+        }
+        assert_ne!(c, c3);
+    }
+
+    #[test]
+    fn falcon_det1024_s2_coeffs_smoke() {
+        let (privkey, _) = unsafe { make_keypair(TEST_SEED) };
+        let sig_ct = unsafe { sign_and_convert_to_ct(&privkey) };
+
+        let mut s2 = [0i16; FALCON_DET1024_N];
+        let ret = unsafe {
+            falcon_det1024_s2_coeffs(s2.as_mut_ptr(), sig_ct.as_ptr() as *const c_void)
+        };
+
+        assert_eq!(ret, 0);
+        assert_ne!(s2, [0i16; FALCON_DET1024_N]);  // coefficients were written
+    }
+
+    #[test]
+    fn falcon_det1024_s1_coeffs_smoke() {
+        let (privkey, pubkey) = unsafe { make_keypair(TEST_SEED) };
+        let sig_ct = unsafe { sign_and_convert_to_ct(&privkey) };
+
+        // unpack h from pubkey
+        let mut h = [0u16; FALCON_DET1024_N];
+        unsafe { falcon_det1024_pubkey_coeffs(h.as_mut_ptr(), pubkey.as_ptr() as *const c_void); }
+
+        // hash message to point c
+        let mut c = [0u16; FALCON_DET1024_N];
+        unsafe {
+            falcon_det1024_hash_to_point_coeffs(
+                c.as_mut_ptr(),
+                TEST_MSG.as_ptr() as *const c_void,
+                TEST_MSG.len(),
+                FALCON_DET1024_CURRENT_SALT_VERSION,
+            );
+        }
+
+        // unpack s2 from CT sig
+        let mut s2 = [0i16; FALCON_DET1024_N];
+        unsafe { falcon_det1024_s2_coeffs(s2.as_mut_ptr(), sig_ct.as_ptr() as *const c_void); }
+
+        // compute s1 = c - s2*h and verify the aggregate is short enough
+        let mut s1 = [0i16; FALCON_DET1024_N];
+        let ret = unsafe {
+            falcon_det1024_s1_coeffs(s1.as_mut_ptr(), h.as_ptr(), c.as_ptr(), s2.as_ptr())
+        };
+
+        assert_eq!(ret, 0);
+        assert_ne!(s1, [0i16; FALCON_DET1024_N]);  // s1 coefficients were written
     }
 }

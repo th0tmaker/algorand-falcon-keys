@@ -1,10 +1,5 @@
-// src/ffi.rs
+// src/lib.rs
 
 pub mod constants;
 mod ffi;
-
-
-#[allow(dead_code)]
-fn main() {
-    println!("Hello, world!");
-}
+mod keygen;
