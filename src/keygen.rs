@@ -3,17 +3,18 @@
 use std::os::raw::c_void;
 
 use zeroize::ZeroizeOnDrop;
-use crate::constants::{FALCON_DET1024_N, FALCON_DET1024_PRIVKEY_SIZE, FALCON_DET1024_PUBKEY_SIZE};
-use crate::ffi::{falcon_det1024_pubkey_coeffs, falcon_det1024_keygen, shake256_init_prng_from_seed, Shake256Context};
 
-#[derive(Debug)]
-pub enum Error {
-    InvalidPublicKey,
-}
+use crate::{
+    constants::{FALCON_DET1024_N, FALCON_DET1024_PRIVKEY_SIZE, FALCON_DET1024_PUBKEY_SIZE},
+    error::Error,
+    ffi::{
+        Shake256Context, falcon_det1024_keygen, falcon_det1024_pubkey_coeffs,
+        shake256_init_prng_from_seed,
+    },
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PublicKey([u8; FALCON_DET1024_PUBKEY_SIZE]);
-
 
 impl PublicKey {
     pub fn from_bytes(bytes: &[u8; FALCON_DET1024_PUBKEY_SIZE]) -> Result<Self, Error> {
@@ -25,13 +26,11 @@ impl PublicKey {
             return Err(Error::InvalidPublicKey);
         }
         Ok(Self(*bytes))
- 
     }
 
     pub fn as_bytes(&self) -> &[u8; FALCON_DET1024_PUBKEY_SIZE] {
         &self.0
     }
-
 }
 
 #[derive(ZeroizeOnDrop)]
@@ -40,16 +39,20 @@ struct PrivateKey([u8; FALCON_DET1024_PRIVKEY_SIZE]);
 impl PrivateKey {
     pub fn from_seed(seed: &[u8]) -> (Self, PublicKey) {
         let mut rng = Shake256Context::default();
-        unsafe { 
-          shake256_init_prng_from_seed(&mut rng, seed.as_ptr() as *const c_void, seed.len()) 
+        unsafe {
+            shake256_init_prng_from_seed(&mut rng, seed.as_ptr() as *const c_void, seed.len())
         };
 
         let mut privkey = [0u8; FALCON_DET1024_PRIVKEY_SIZE];
         let mut pubkey = [0u8; FALCON_DET1024_PUBKEY_SIZE];
-        unsafe { 
-          falcon_det1024_keygen(&mut rng, privkey.as_mut_ptr() as *mut c_void, pubkey.as_mut_ptr() as *mut c_void)
+        unsafe {
+            falcon_det1024_keygen(
+                &mut rng,
+                privkey.as_mut_ptr() as *mut c_void,
+                pubkey.as_mut_ptr() as *mut c_void,
+            )
         };
-        
+
         (Self(privkey), PublicKey(pubkey))
     }
 
@@ -98,8 +101,8 @@ mod tests {
         let key = PublicKey::from_bytes(&pubkey_bytes).unwrap();
         let cloned = key.clone();
 
-        assert_eq!(key, cloned);  // PartialEq: same bytes
-        assert_ne!(key, PublicKey(pubkey_bytes.map(|b| b.wrapping_add(1))));  // different bytes -> not equal
+        assert_eq!(key, cloned); // PartialEq: same bytes
+        assert_ne!(key, PublicKey(pubkey_bytes.map(|b| b.wrapping_add(1)))); // different bytes -> not equal
     }
 
     #[test]
@@ -115,7 +118,7 @@ mod tests {
     fn private_key_from_seed() {
         let (privkey, pubkey) = PrivateKey::from_seed(TEST_SEED);
 
-        assert_ne!(privkey.as_bytes(), &[0u8; FALCON_DET1024_PRIVKEY_SIZE]);  // key was written
+        assert_ne!(privkey.as_bytes(), &[0u8; FALCON_DET1024_PRIVKEY_SIZE]); // key was written
         assert_ne!(pubkey.as_bytes(), &[0u8; FALCON_DET1024_PUBKEY_SIZE]);
     }
 
@@ -124,7 +127,7 @@ mod tests {
         let (privkey1, pubkey1) = PrivateKey::from_seed(TEST_SEED);
         let (privkey2, pubkey2) = PrivateKey::from_seed(TEST_SEED);
 
-        assert_eq!(privkey1.as_bytes(), privkey2.as_bytes());  // same seed -> same keys
+        assert_eq!(privkey1.as_bytes(), privkey2.as_bytes()); // same seed -> same keys
         assert_eq!(pubkey1.as_bytes(), pubkey2.as_bytes());
     }
 
@@ -133,7 +136,7 @@ mod tests {
         let (privkey1, pubkey1) = PrivateKey::from_seed(TEST_SEED);
         let (privkey2, pubkey2) = PrivateKey::from_seed(ALT_SEED);
 
-        assert_ne!(privkey1.as_bytes(), privkey2.as_bytes());  // different seed -> different keys
+        assert_ne!(privkey1.as_bytes(), privkey2.as_bytes()); // different seed -> different keys
         assert_ne!(pubkey1.as_bytes(), pubkey2.as_bytes());
     }
 

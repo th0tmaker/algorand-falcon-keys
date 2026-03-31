@@ -1,5 +1,7 @@
 // src/lib.rs
 
-pub mod constants;
+mod constants;
+pub mod error;
 mod ffi;
 mod keygen;
+mod signature;
