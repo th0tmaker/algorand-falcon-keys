@@ -42,6 +42,7 @@ unsafe extern "C" {
         data_len: usize,
     ) -> c_int;
 
+    #[cfg(test)]
     pub fn falcon_det1024_get_salt_version(sig: *const c_void) -> c_int;
 
     pub fn falcon_det1024_convert_compressed_to_ct(
@@ -59,6 +60,7 @@ unsafe extern "C" {
 
     pub fn falcon_det1024_pubkey_coeffs(h: *mut u16, pubkey: *const c_void) -> c_int;
 
+    #[cfg(test)]
     pub fn falcon_det1024_hash_to_point_coeffs(
         c: *mut u16,
         data: *const c_void,
@@ -66,8 +68,10 @@ unsafe extern "C" {
         salt_version: u8,
     );
 
+    #[cfg(test)]
     pub fn falcon_det1024_s2_coeffs(s2: *mut i16, sig: *const c_void) -> c_int;
 
+    #[cfg(test)]
     pub fn falcon_det1024_s1_coeffs(
         s1: *mut i16,
         h: *const u16,

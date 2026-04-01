@@ -1,6 +1,5 @@
 // src/constants.rs
 
-pub const FALCON_DET1024_LOGN: u32 = 10;
 pub const FALCON_DET1024_PUBKEY_SIZE: usize = 1793;
 pub const FALCON_DET1024_PRIVKEY_SIZE: usize = 2305;
 
@@ -16,8 +15,10 @@ pub const FALCON_DET1024_SIG_CT_HEADER: u8 = 0x5A | 0x80; // 0xDA
 pub const FALCON_DET1024_CURRENT_SALT_VERSION: u8 = 0;
 
 // SHAKE-256 internal layout constants.
-pub const SHAKE256_STATE_WORDS: usize = 25;  // Keccak-1600: 25 x u64 = 200 bytes
+pub const SHAKE256_STATE_WORDS: usize = 25; // Keccak-1600: 25 x u64 = 200 bytes
+#[cfg(test)]
 pub const SHAKE256_RATE: u64 = 136; // rate in bytes; dptr is always 136 after init
+#[cfg(test)]
 pub const SHAKE256_CONTEXT_SIZE: usize = 208; // 25xu64 (st) + u64 (dptr)
 
 pub const FALCON_DET1024_N: usize = 1024; // polynomial degree: 1 << FALCON_DET1024_LOGN
