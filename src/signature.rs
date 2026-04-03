@@ -23,7 +23,7 @@ use crate::{
 pub struct CompressedSignature(Box<[u8]>);
 
 impl CompressedSignature {
-    /// Constructs a `CompressedSignature` from raw bytes.
+    /// Constructor: Returns an instance of self from bytes.
     ///
     /// NOTE: Will only fail if input bytes are structurally malformed (invalid size, header, or salt version).
     /// In order to guarantee the `CompressedSignature` type ` or its underyling raw bytes are cryptographically valid,
@@ -95,7 +95,7 @@ impl CompressedSignature {
 pub struct CtSignature([u8; FALCON_DET1024_SIG_CT_SIZE]);
 
 impl CtSignature {
-    /// Constructs a `CtSignature` from raw bytes.
+    /// Constructor: Returns an instance of self from bytes.
     ///
     /// NOTE: Will only fail if input bytes are structurally malformed (invalid header or salt version).
     /// In order to guarantee the `CtSignature` type or its underyling raw bytes are cryptographically valid,
@@ -133,7 +133,7 @@ mod tests {
             FALCON_DET1024_SIG_COMPRESSED_MAXSIZE, FALCON_DET1024_SIG_CT_HEADER,
             FALCON_DET1024_SIG_CT_SIZE,
         },
-        keygen::PrivateKey,
+        keygen::derive_keypair,
     };
 
     const TEST_SEED: &[u8] = b"test1234";
@@ -141,7 +141,7 @@ mod tests {
 
     // Generates a real compressed signature over TEST_MSG.
     fn make_compressed_sig() -> CompressedSignature {
-        let (privkey, _) = PrivateKey::from_seed(TEST_SEED);
+        let (privkey, _) = derive_keypair(TEST_SEED).unwrap();
         privkey.sign(TEST_MSG).unwrap()
     }
 

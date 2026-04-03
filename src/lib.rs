@@ -7,5 +7,5 @@ mod keygen;
 mod signature;
 
 pub use error::{Error, SignatureError};
-pub use keygen::{PrivateKey, PublicKey};
+pub use keygen::{derive_keypair, PrivateKey, PublicKey};
 pub use signature::{CompressedSignature, CtSignature};

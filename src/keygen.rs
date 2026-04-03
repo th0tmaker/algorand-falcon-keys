@@ -3,23 +3,22 @@
 use std::os::raw::c_void;
 
 use crate::{
-    constants::{
-        FALCON_DET1024_N, FALCON_DET1024_PRIVKEY_SIZE, FALCON_DET1024_PUBKEY_SIZE,
-        FALCON_DET1024_SIG_COMPRESSED_MAXSIZE,
+    constants::{FALCON_DET1024_N, FALCON_DET1024_PRIVKEY_SIZE,
+        FALCON_DET1024_PUBKEY_SIZE, FALCON_DET1024_SIG_COMPRESSED_MAXSIZE
     },
     error::{Error, SignatureError},
-    ffi::{
-        Shake256Context, falcon_det1024_keygen, falcon_det1024_pubkey_coeffs,
-        falcon_det1024_sign_compressed, falcon_det1024_verify_compressed, falcon_det1024_verify_ct,
-        shake256_init_prng_from_seed,
+    ffi::{Shake256Context, falcon_det1024_keygen, falcon_det1024_pubkey_coeffs,
+        falcon_det1024_sign_compressed, falcon_det1024_verify_compressed, 
+        falcon_det1024_verify_ct, shake256_init_prng_from_seed
     },
-    signature::{CompressedSignature, CtSignature},
+    signature::{CompressedSignature, CtSignature}
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublicKey([u8; FALCON_DET1024_PUBKEY_SIZE]);
 
 impl PublicKey {
+    /// Constructor: Returns an instance of self from bytes.
     pub fn from_bytes(bytes: &[u8; FALCON_DET1024_PUBKEY_SIZE]) -> Result<Self, Error> {
         let mut h = [0u16; FALCON_DET1024_N];
         let ret = unsafe {
@@ -36,6 +35,7 @@ impl PublicKey {
         &self.0
     }
 
+    /// Verifies a signature in compressed format over a message against self.
     pub fn verify_compressed(
         &self,
         signature: &CompressedSignature,
@@ -60,6 +60,7 @@ impl PublicKey {
         }
     }
 
+    /// Verifies a signature in constant-time format over a message against self.
     pub fn verify_ct(&self, signature: &CtSignature, message: &[u8]) -> Result<(), Error> {
         let ret = unsafe {
             falcon_det1024_verify_ct(
@@ -95,30 +96,11 @@ impl Drop for PrivateKey {
 }
 
 impl PrivateKey {
-    pub fn from_seed(seed: &[u8]) -> (Self, PublicKey) {
-        let mut rng = Shake256Context::default();
-        unsafe {
-            shake256_init_prng_from_seed(&mut rng, seed.as_ptr() as *const c_void, seed.len())
-        };
-
-        let mut privkey = [0u8; FALCON_DET1024_PRIVKEY_SIZE];
-        let mut pubkey = [0u8; FALCON_DET1024_PUBKEY_SIZE];
-        unsafe {
-            falcon_det1024_keygen(
-                &mut rng,
-                privkey.as_mut_ptr() as *mut c_void,
-                pubkey.as_mut_ptr() as *mut c_void,
-            )
-        };
-
-        (Self(privkey), PublicKey(pubkey))
-    }
-
-    /// Constructs a `PrivateKey` from raw bytes without validation.
+    /// Constructor: Returns an instance of self from bytes without validation.
     ///
     /// Intended for round-tripping a key produced by `from_seed` through trusted storage.
     /// Invalid bytes are not rejected here — they will cause `sign` to return
-    /// `Err(Error::Falcon(...))` when the C library rejects them during decode.
+    /// Returns `Err(Error::Falcon(...))` if the vendored C library rejects them during decode.
     pub fn from_bytes(bytes: &[u8; FALCON_DET1024_PRIVKEY_SIZE]) -> Self {
         Self(*bytes)
     }
@@ -128,6 +110,8 @@ impl PrivateKey {
         &self.0
     }
 
+    /// Returns an instance of `CompressedSignature` 
+    /// over a message as bytes produced by self 
     pub fn sign(&self, message: &[u8]) -> Result<CompressedSignature, Error> {
         let mut sig = [0u8; FALCON_DET1024_SIG_COMPRESSED_MAXSIZE];
         let mut sig_len = 0usize;
@@ -148,6 +132,38 @@ impl PrivateKey {
 
         CompressedSignature::from_bytes(&sig[..sig_len])
     }
+}
+
+/// Derives a Falcon det1024 keypair from a seed.
+///
+/// The seed is absorbed into a SHAKE-256 PRNG which drives key generation.
+/// Any byte sequence is a valid seed — callers are responsible for providing
+/// a seed with sufficient entropy.
+///
+/// Returns a tuple containing an instance of `PrivateKey` and `PublicKey`
+/// or `Err(Error::Falcon(...))` if the underlying vendored C library keygen fails. 
+pub fn derive_keypair(seed: &[u8]) -> Result<(PrivateKey, PublicKey), Error> {
+    let mut rng = Shake256Context::default();
+    unsafe {
+        shake256_init_prng_from_seed(&mut rng, seed.as_ptr() as *const c_void, seed.len())
+    };
+
+    let mut privkey = [0u8; FALCON_DET1024_PRIVKEY_SIZE];
+    let mut pubkey = [0u8; FALCON_DET1024_PUBKEY_SIZE];
+    
+    let ret = unsafe {
+        falcon_det1024_keygen(
+            &mut rng,
+            privkey.as_mut_ptr() as *mut c_void,
+            pubkey.as_mut_ptr() as *mut c_void,
+        )
+    };
+
+    if ret != 0 {
+        return Err(Error::Falcon(ret));
+    }
+
+    Ok((PrivateKey(privkey), PublicKey(pubkey)))
 }
 
 #[cfg(test)]
@@ -175,7 +191,7 @@ mod tests {
 
     #[test]
     fn public_key_from_bytes_valid() {
-        let (_, pubkey) = PrivateKey::from_seed(TEST_SEED);
+        let (_, pubkey) = derive_keypair(TEST_SEED).unwrap();
         let pubkey_bytes = *pubkey.as_bytes();
         let result = PublicKey::from_bytes(&pubkey_bytes);
 
@@ -185,7 +201,7 @@ mod tests {
 
     #[test]
     fn public_key_clone_and_eq() {
-        let (_, pubkey) = PrivateKey::from_seed(TEST_SEED);
+        let (_, pubkey) = derive_keypair(TEST_SEED).unwrap();
         let pubkey_bytes = *pubkey.as_bytes();
         let key = PublicKey::from_bytes(&pubkey_bytes).unwrap();
         let cloned = key.clone();
@@ -205,7 +221,7 @@ mod tests {
 
     #[test]
     fn private_key_from_seed() {
-        let (privkey, pubkey) = PrivateKey::from_seed(TEST_SEED);
+        let (privkey, pubkey) = derive_keypair(TEST_SEED).unwrap();
 
         assert_ne!(privkey.as_bytes(), &[0u8; FALCON_DET1024_PRIVKEY_SIZE]); // key was written
         assert_ne!(pubkey.as_bytes(), &[0u8; FALCON_DET1024_PUBKEY_SIZE]);
@@ -213,8 +229,8 @@ mod tests {
 
     #[test]
     fn private_key_from_seed_deterministic() {
-        let (privkey1, pubkey1) = PrivateKey::from_seed(TEST_SEED);
-        let (privkey2, pubkey2) = PrivateKey::from_seed(TEST_SEED);
+        let (privkey1, pubkey1) = derive_keypair(TEST_SEED).unwrap();
+        let (privkey2, pubkey2) = derive_keypair(TEST_SEED).unwrap();
 
         assert_eq!(privkey1.as_bytes(), privkey2.as_bytes()); // same seed -> same keys
         assert_eq!(pubkey1.as_bytes(), pubkey2.as_bytes());
@@ -222,8 +238,8 @@ mod tests {
 
     #[test]
     fn private_key_from_seed_different_seeds() {
-        let (privkey1, pubkey1) = PrivateKey::from_seed(TEST_SEED);
-        let (privkey2, pubkey2) = PrivateKey::from_seed(ALT_SEED);
+        let (privkey1, pubkey1) = derive_keypair(TEST_SEED).unwrap();
+        let (privkey2, pubkey2) = derive_keypair(ALT_SEED).unwrap();
 
         assert_ne!(privkey1.as_bytes(), privkey2.as_bytes()); // different seed -> different keys
         assert_ne!(pubkey1.as_bytes(), pubkey2.as_bytes());
@@ -231,7 +247,7 @@ mod tests {
 
     #[test]
     fn private_key_sign() {
-        let (privkey, _) = PrivateKey::from_seed(TEST_SEED);
+        let (privkey, _) = derive_keypair(TEST_SEED).unwrap();
         let sig = privkey.sign(TEST_MSG).unwrap();
 
         assert_eq!(sig.as_bytes()[0], FALCON_DET1024_SIG_COMPRESSED_HEADER);
@@ -240,7 +256,7 @@ mod tests {
 
     #[test]
     fn private_key_sign_is_deterministic() {
-        let (privkey, _) = PrivateKey::from_seed(TEST_SEED);
+        let (privkey, _) = derive_keypair(TEST_SEED).unwrap();
         let sig1 = privkey.sign(TEST_MSG).unwrap();
         let sig2 = privkey.sign(TEST_MSG).unwrap();
 
@@ -249,7 +265,7 @@ mod tests {
 
     #[test]
     fn verify_compressed_valid() {
-        let (privkey, pubkey) = PrivateKey::from_seed(TEST_SEED);
+        let (privkey, pubkey) = derive_keypair(TEST_SEED).unwrap();
         let sig = privkey.sign(TEST_MSG).unwrap();
 
         assert!(pubkey.verify_compressed(&sig, TEST_MSG).is_ok());
@@ -257,7 +273,7 @@ mod tests {
 
     #[test]
     fn verify_compressed_wrong_message() {
-        let (privkey, pubkey) = PrivateKey::from_seed(TEST_SEED);
+        let (privkey, pubkey) = derive_keypair(TEST_SEED).unwrap();
         let sig = privkey.sign(TEST_MSG).unwrap();
 
         assert!(matches!(
@@ -268,8 +284,8 @@ mod tests {
 
     #[test]
     fn verify_compressed_wrong_key() {
-        let (privkey, _) = PrivateKey::from_seed(TEST_SEED);
-        let (_, wrong_pubkey) = PrivateKey::from_seed(ALT_SEED);
+        let (privkey, _) = derive_keypair(TEST_SEED).unwrap();
+        let (_, wrong_pubkey) = derive_keypair(ALT_SEED).unwrap();
         let sig = privkey.sign(TEST_MSG).unwrap();
 
         assert!(matches!(
@@ -280,7 +296,7 @@ mod tests {
 
     #[test]
     fn verify_ct_valid() {
-        let (privkey, pubkey) = PrivateKey::from_seed(TEST_SEED);
+        let (privkey, pubkey) = derive_keypair(TEST_SEED).unwrap();
         let sig = privkey.sign(TEST_MSG).unwrap().to_ct().unwrap();
 
         assert!(pubkey.verify_ct(&sig, TEST_MSG).is_ok());
@@ -288,7 +304,7 @@ mod tests {
 
     #[test]
     fn verify_ct_wrong_message() {
-        let (privkey, pubkey) = PrivateKey::from_seed(TEST_SEED);
+        let (privkey, pubkey) = derive_keypair(TEST_SEED).unwrap();
         let sig = privkey.sign(TEST_MSG).unwrap().to_ct().unwrap();
 
         assert!(matches!(
@@ -299,8 +315,8 @@ mod tests {
 
     #[test]
     fn verify_ct_wrong_key() {
-        let (privkey, _) = PrivateKey::from_seed(TEST_SEED);
-        let (_, wrong_pubkey) = PrivateKey::from_seed(ALT_SEED);
+        let (privkey, _) = derive_keypair(TEST_SEED).unwrap();
+        let (_, wrong_pubkey) = derive_keypair(ALT_SEED).unwrap();
         let sig = privkey.sign(TEST_MSG).unwrap().to_ct().unwrap();
 
         assert!(matches!(
@@ -311,7 +327,7 @@ mod tests {
 
     #[test]
     fn private_key_from_bytes_roundtrip() {
-        let (privkey, _) = PrivateKey::from_seed(TEST_SEED);
+        let (privkey, _) = derive_keypair(TEST_SEED).unwrap();
         let bytes = *privkey.as_bytes();
         let restored = PrivateKey::from_bytes(&bytes);
 
