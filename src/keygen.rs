@@ -8,34 +8,46 @@ use crate::{
     },
     error::{Error, SignatureError},
     ffi::{Shake256Context, falcon_det1024_keygen, falcon_det1024_pubkey_coeffs,
-        falcon_det1024_sign_compressed, falcon_det1024_verify_compressed, 
+        falcon_det1024_sign_compressed, falcon_det1024_verify_compressed,
         falcon_det1024_verify_ct, shake256_init_prng_from_seed
     },
-    signature::{CompressedSignature, CtSignature}
+    signature::{CompressedSignature, CtSignature},
+    zeroize::Zeroize,
 };
 
+/// A Falcon-det1024 public key.
+///
+/// Wraps the `FALCON_DET1024_PUBKEY_SIZE`-byte encoding produced by keygen.
+/// `from_bytes` validates the encoding by decoding the NTT coefficients;
+/// the raw bytes are then stored for use in verification calls.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublicKey([u8; FALCON_DET1024_PUBKEY_SIZE]);
 
 impl PublicKey {
-    /// Constructor: Returns an instance of self from bytes.
+    /// Instantiates `self` from input `bytes` argument with validation.
+    /// 
+    /// Returns `Err(Error::InvalidPublicKey)` if the `bytes`
+    /// encode into an invalid `self`.
     pub fn from_bytes(bytes: &[u8; FALCON_DET1024_PUBKEY_SIZE]) -> Result<Self, Error> {
         let mut h = [0u16; FALCON_DET1024_N];
+
         let ret = unsafe {
             falcon_det1024_pubkey_coeffs(h.as_mut_ptr(), bytes.as_ptr() as *const c_void)
         };
+
         if ret != 0 {
             return Err(Error::InvalidPublicKey);
         }
+
         Ok(Self(*bytes))
     }
 
-    /// Returns the underlying bytes.
+    /// Returns the underlying bytes of `self`.
     pub fn as_bytes(&self) -> &[u8; FALCON_DET1024_PUBKEY_SIZE] {
         &self.0
     }
 
-    /// Verifies a signature in compressed format over a message against self.
+    /// Verifies a [`CompressedSignature`] over a `message` against `self`.
     pub fn verify_compressed(
         &self,
         signature: &CompressedSignature,
@@ -60,7 +72,7 @@ impl PublicKey {
         }
     }
 
-    /// Verifies a signature in constant-time format over a message against self.
+    /// Verifies a [`CtSignature`] over a `message` against `self`.
     pub fn verify_ct(&self, signature: &CtSignature, message: &[u8]) -> Result<(), Error> {
         let ret = unsafe {
             falcon_det1024_verify_ct(
@@ -79,39 +91,40 @@ impl PublicKey {
     }
 }
 
+/// A Falcon-det1024 private key.
+///
+/// Wraps the `FALCON_DET1024_PRIVKEY_SIZE`-byte encoding produced by keygen.
+/// The inner bytes are secret and zeroed on drop — do not clone or persist
+/// without deliberate intent. Obtain via `derive_keypair` or `from_bytes`.
 pub struct PrivateKey([u8; FALCON_DET1024_PRIVKEY_SIZE]);
 
 impl Drop for PrivateKey {
     fn drop(&mut self) {
-        // `write_volatile` marks each write as observable, preventing the compiler
-        // from eliding them as dead stores when the value is about to be freed.
-        for byte in self.0.iter_mut() {
-            unsafe { std::ptr::write_volatile(byte, 0) }
-        }
-        // `compiler_fence` ensures the volatile writes are not reordered past this
-        // point at compile time. No CPU fence instruction is emitted — cross-thread
-        // visibility of the zeroing is not a concern here.
-        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+        self.0.zeroize();
     }
 }
 
 impl PrivateKey {
-    /// Constructor: Returns an instance of self from bytes without validation.
+    /// Instantiates `self` from `bytes` **without** validation, consuming the buffer.
     ///
-    /// Intended for round-tripping a key produced by `from_seed` through trusted storage.
-    /// Invalid bytes are not rejected here — they will cause `sign` to return
-    /// Returns `Err(Error::Falcon(...))` if the vendored C library rejects them during decode.
-    pub fn from_bytes(bytes: &[u8; FALCON_DET1024_PRIVKEY_SIZE]) -> Self {
-        Self(*bytes)
+    /// The caller's array is moved in and zeroed after the key material is copied
+    /// into `self`. Invalid bytes are not rejected here — they will surface as
+    /// `Err(Error::Falcon(...))` when `sign` is called and the vendor C library
+    /// decodes the key into its internal polynomial representation (f, g, F, G
+    /// coefficients) at sign time.
+    pub fn from_bytes(mut bytes: [u8; FALCON_DET1024_PRIVKEY_SIZE]) -> Self {
+        let key = Self(bytes);
+        bytes.zeroize();
+        key
     }
 
-    /// Returns the underlying bytes.
+    /// Returns the underlying bytes of `self`.
     pub fn as_bytes(&self) -> &[u8; FALCON_DET1024_PRIVKEY_SIZE] {
         &self.0
     }
 
-    /// Returns an instance of `CompressedSignature` 
-    /// over a message as bytes produced by self 
+    /// Returns an instance of [`CompressedSignature`] that was produced
+    /// by signing a `message` with `self`
     pub fn sign(&self, message: &[u8]) -> Result<CompressedSignature, Error> {
         let mut sig = [0u8; FALCON_DET1024_SIG_COMPRESSED_MAXSIZE];
         let mut sig_len = 0usize;
@@ -134,16 +147,17 @@ impl PrivateKey {
     }
 }
 
-/// Derives a Falcon det1024 keypair from a seed.
+/// Derives a Falcon-det1024 keypair from a seed.
 ///
 /// The seed is absorbed into a SHAKE-256 PRNG which drives key generation.
 /// Any byte sequence is a valid seed — callers are responsible for providing
 /// a seed with sufficient entropy.
 ///
-/// Returns a tuple containing an instance of `PrivateKey` and `PublicKey`
-/// or `Err(Error::Falcon(...))` if the underlying vendored C library keygen fails. 
+/// Returns a tuple containing an instance of [`PrivateKey`] and [`PublicKey`]
+/// or `Err(Error::Falcon(...))` if the vendor C library key generation fails. 
 pub fn derive_keypair(seed: &[u8]) -> Result<(PrivateKey, PublicKey), Error> {
     let mut rng = Shake256Context::default();
+
     unsafe {
         shake256_init_prng_from_seed(&mut rng, seed.as_ptr() as *const c_void, seed.len())
     };
@@ -160,10 +174,17 @@ pub fn derive_keypair(seed: &[u8]) -> Result<(PrivateKey, PublicKey), Error> {
     };
 
     if ret != 0 {
+        // Zero the stack buffer before returning — keygen failed but privkey may
+        // hold partial key material written by the C library before the error.
+        privkey.zeroize();
         return Err(Error::Falcon(ret));
     }
 
-    Ok((PrivateKey(privkey), PublicKey(pubkey)))
+    // PrivateKey(privkey) copies the bytes (Copy type), so the stack buffer still
+    // holds key material after the constructor call. Zero it explicitly.
+    let result = Ok((PrivateKey(privkey), PublicKey(pubkey)));
+    privkey.zeroize();
+    result
 }
 
 #[cfg(test)]
@@ -329,7 +350,7 @@ mod tests {
     fn private_key_from_bytes_roundtrip() {
         let (privkey, _) = derive_keypair(TEST_SEED).unwrap();
         let bytes = *privkey.as_bytes();
-        let restored = PrivateKey::from_bytes(&bytes);
+        let restored = PrivateKey::from_bytes(bytes);
 
         assert_eq!(restored.as_bytes(), &bytes);
     }

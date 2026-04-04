@@ -3,29 +3,59 @@
 use std::os::raw::{c_int, c_void};
 
 use crate::constants::SHAKE256_STATE_WORDS;
+use crate::zeroize::Zeroize;
 
-/// Mirror of `shake256_context` from falcon.h. Used as a PRNG throughout Falcon.
+/// Sponge state for the SHAKE-256 extendable-output function, used as Falcon's PRNG.
+///
+/// Mirrors `shake256_context` from `falcon.h` and must remain ABI-compatible with it
+/// (`#[repr(C)]`). The lifecycle is: seed → absorb (`shake256_init_prng_from_seed`) →
+/// squeeze (`shake256_extract`). Each instance is seeded independently and must not be
+/// shared across concurrent callers. The vendor C library zeroes this state on init
+/// but has no cleanup function; the `Drop` impl here handles zeroing on the Rust side.
 #[derive(Debug, Default)]
 #[repr(C)]
 pub struct Shake256Context {
-    pub st: [u64; SHAKE256_STATE_WORDS], // Keccak-1600 state, 200 bytes, unique per seed
-    pub dptr: u64, // squeeze position: 0 = uninit, 136 = ready, 1-135 = mid-extraction
+    /// The 1600-bit (200-byte) Keccak-f[1600] permutation state, stored as 25 × u64.
+    /// Each call to `shake256_init_prng_from_seed` loads a unique seed here,
+    /// producing an independent PRNG stream. Never share this across contexts.
+    pub st: [u64; SHAKE256_STATE_WORDS],
+    /// Byte offset into the current squeezed block (the "output pointer").
+    /// - `0`   → not yet initialized / absorb phase
+    /// - `136` → a fresh rate block is ready; the next squeeze will read from byte 0
+    /// - `1–135` → mid-extraction; bytes up to this offset have already been consumed
+    ///
+    /// SHAKE-256 has a rate of 136 bytes (= 1600 − 2×256 bits security margin).
+    /// When `dptr` reaches 136, the Keccak permutation is applied again to refill.
+    pub dptr: u64,
+}
+
+impl Drop for Shake256Context {
+    fn drop(&mut self) {
+        self.st.zeroize();
+        self.dptr.zeroize();
+    }
 }
 
 unsafe extern "C" {
-    /// Init Shake256 as a seeded deterministic PRNG (init -> inject -> flip).
+    /// Absorbs `seed` into `sc`, leaving it ready to squeeze randomness.
+    /// Must be called before passing `sc` to `falcon_det1024_keygen`.
     pub fn shake256_init_prng_from_seed(
         sc: *mut Shake256Context,
         seed: *const c_void,
         seed_len: usize,
     );
 
+    /// Generates a Falcon-det1024 keypair driven by the PRNG state in `rng`.
+    /// Writes `FALCON_DET1024_PRIVKEY_SIZE` bytes to `privkey`
+    /// and `FALCON_DET1024_PUBKEY_SIZE` bytes to `pubkey`.
     pub fn falcon_det1024_keygen(
         rng: *mut Shake256Context,
         privkey: *mut c_void,
         pubkey: *mut c_void,
     ) -> c_int;
 
+    /// Signs `data` with `privkey`, writing a variable-length compressed signature to `sig`
+    /// and its byte length to `sig_len`. Returns 0 on success.
     pub fn falcon_det1024_sign_compressed(
         sig: *mut c_void,
         sig_len: *mut usize,
@@ -34,6 +64,8 @@ unsafe extern "C" {
         data_len: usize,
     ) -> c_int;
 
+    /// Verifies a compressed signature over `data` against `pubkey`.
+    /// Returns 0 if valid, -4 if the signature is rejected, or another non-zero code on error.
     pub fn falcon_det1024_verify_compressed(
         sig: *const c_void,
         sig_len: usize,
@@ -42,15 +74,20 @@ unsafe extern "C" {
         data_len: usize,
     ) -> c_int;
 
+    /// Returns the salt version embedded in the compressed signature header byte.
     #[cfg(test)]
     pub fn falcon_det1024_get_salt_version(sig: *const c_void) -> c_int;
 
+    /// Converts a compressed signature to constant-time (CT) format, writing
+    /// exactly `FALCON_DET1024_SIG_CT_SIZE` bytes to `sig_ct`. Returns 0 on success.
     pub fn falcon_det1024_convert_compressed_to_ct(
         sig_ct: *mut c_void,
         sig_compressed: *const c_void,
         sig_compressed_len: usize,
     ) -> c_int;
 
+    /// Verifies a constant-time format signature over `data` against `pubkey`.
+    /// Returns 0 if valid, -4 if the signature is rejected, or another non-zero code on error.
     pub fn falcon_det1024_verify_ct(
         sig: *const c_void,
         pubkey: *const c_void,
@@ -58,8 +95,12 @@ unsafe extern "C" {
         data_len: usize,
     ) -> c_int;
 
+    /// Decodes `pubkey` into its `N` NTT coefficients, writing them to `h`.
+    /// Returns 0 on success, non-zero if the encoding is malformed.
     pub fn falcon_det1024_pubkey_coeffs(h: *mut u16, pubkey: *const c_void) -> c_int;
 
+    /// Hashes `data` to a polynomial point `c` of degree N, using `salt_version` to select
+    /// the domain-separation salt. Deterministic: same inputs always produce the same `c`.
     #[cfg(test)]
     pub fn falcon_det1024_hash_to_point_coeffs(
         c: *mut u16,
@@ -68,9 +109,13 @@ unsafe extern "C" {
         salt_version: u8,
     );
 
+    /// Extracts the s2 signature polynomial coefficients from a CT-format signature.
+    /// Returns 0 on success, non-zero if decoding fails.
     #[cfg(test)]
     pub fn falcon_det1024_s2_coeffs(s2: *mut i16, sig: *const c_void) -> c_int;
 
+    /// Computes s1 = c − s2·h (mod the Falcon ring), verifying the norm bound.
+    /// Returns 0 on success, non-zero if the aggregate signature vector is too long.
     #[cfg(test)]
     pub fn falcon_det1024_s1_coeffs(
         s1: *mut i16,
@@ -87,9 +132,8 @@ mod tests {
 
     const TEST_SEED: &[u8] = b"test1234";
     const ALT_SEED: &[u8] = b"different";
-    const TEST_MSG: &[u8] = b"hello algorand";
+    const TEST_MSG: &[u8] = b"hello";
 
-    // Helper: seed a PRNG, generate a keypair, return (privkey, pubkey).
     unsafe fn make_keypair(
         seed: &[u8],
     ) -> (

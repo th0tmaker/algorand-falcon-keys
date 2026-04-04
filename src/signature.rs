@@ -12,22 +12,20 @@ use crate::{
     ffi::falcon_det1024_convert_compressed_to_ct,
 };
 
-/// A Falcon det1024 signature in compressed (Huffman-coded) format.
+/// A Falcon-det1024 signature in compressed (Huffman-coded) format.
 ///
-/// This type enforces structural integrity only: the header byte, salt version,
-/// and length are validated on construction. It does not guarantee the signature is cryptographic
-/// valid — a well-formed `CompressedSignature` may still fail verification.
-/// Cryptographic validity must be established separately by calling
-/// `verify_compressed` with the corresponding public key and message.
+/// **WARNING**: This type enforces structural integrity only: the header byte, salt version,
+/// and length are validated on construction. A well-formed `self` may still fail verification
+/// as this type does not guarantee cryptographic validity — that must be established
+/// separately by calling `verify_compressed` with the corresponding public key and message.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompressedSignature(Box<[u8]>);
 
 impl CompressedSignature {
-    /// Constructor: Returns an instance of self from bytes.
-    ///
-    /// NOTE: Will only fail if input bytes are structurally malformed (invalid size, header, or salt version).
-    /// In order to guarantee the `CompressedSignature` type ` or its underyling raw bytes are cryptographically valid,
-    /// a seperate verification function must be used, where the signature is computed against a public key and message.
+    /// Instantiates `self` from input `bytes` argument with validation.
+    /// 
+    /// Returns `Err(Error::Signature(...))` if the `bytes`
+    /// encode into a structurally malformed `self`.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
         // Must have at least a header byte and a salt version byte
         if bytes.len() < 2 {
@@ -50,22 +48,20 @@ impl CompressedSignature {
         Ok(Self(bytes.into()))
     }
 
-    /// Returns the underlying bytes.
+    /// Returns the underlying bytes of `self`.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
-    /// Returns the salt version embedded in the signature.
+    /// Returns the salt version embedded in `self`.
     pub fn salt_version(&self) -> u8 {
         self.0[1]
     }
 
-    /// Converts this signature from compressed to constant-time format.
+    /// Converts `self` to [`CtSignature`] with validation.
     pub fn to_ct(&self) -> Result<CtSignature, Error> {
-        // Init a mutable buffer for the constant-time signature bytes
         let mut ct = [0u8; FALCON_DET1024_SIG_CT_SIZE];
 
-        // Convert signature from compressed to ct
         let ret = unsafe {
             falcon_det1024_convert_compressed_to_ct(
                 ct.as_mut_ptr() as *mut c_void,
@@ -74,32 +70,30 @@ impl CompressedSignature {
             )
         };
 
-        // If return is NOT equal to zero, conversion failed, throw error
         if ret != 0 {
             return Err(SignatureError::MalformedEncoding.into());
         }
 
-        // Return `CtSignature` type from the mutated buffer
         Ok(CtSignature(ct))
     }
 }
 
-/// A Falcon det1024 signature in constant-time (CT) format.
+/// A Falcon-det1024 signature in constant-time (CT) format.
 ///
-/// CT format is always exactly `FALCON_DET1024_SIG_CT_SIZE` bytes.
-/// This type enforces structural integrity only — header
-/// byte, salt version, and exact length. Cryptographic validity must be
-/// established separately by calling `verify_ct` with the corresponding public
-/// key and message.
+/// CT format is always exactly [`FALCON_DET1024_SIG_CT_SIZE`] bytes.
+///
+/// **WARNING**: This type enforces structural integrity only: the header byte, salt version,
+/// and length are validated on construction. A well-formed `self` may still fail verification
+/// as this type does not guarantee cryptographic validity — that must be established
+/// separately by calling `verify_compressed` with the corresponding public key and message.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CtSignature([u8; FALCON_DET1024_SIG_CT_SIZE]);
 
 impl CtSignature {
-    /// Constructor: Returns an instance of self from bytes.
-    ///
-    /// NOTE: Will only fail if input bytes are structurally malformed (invalid header or salt version).
-    /// In order to guarantee the `CtSignature` type or its underyling raw bytes are cryptographically valid,
-    /// a seperate verification function must be used, where the signature is computed against a public key and message.
+    /// Instantiates `self` from input `bytes` argument with validation.
+    /// 
+    /// Returns `Err(Error::Signature(...))` if the `bytes`
+    /// encode into a structurally malformed `self`.
     pub fn from_bytes(bytes: &[u8; FALCON_DET1024_SIG_CT_SIZE]) -> Result<Self, Error> {
         // First byte must carry the correct det1024 CT-format header.
         if bytes[0] != FALCON_DET1024_SIG_CT_HEADER {
@@ -113,12 +107,12 @@ impl CtSignature {
         Ok(Self(*bytes))
     }
 
-    /// Returns the underlying bytes.
+    /// Returns the underlying bytes of `self`.
     pub fn as_bytes(&self) -> &[u8; FALCON_DET1024_SIG_CT_SIZE] {
         &self.0
     }
 
-    /// Returns the salt version embedded in the signature.
+    /// Returns the salt version embedded in `self`.
     pub fn salt_version(&self) -> u8 {
         self.0[1]
     }
@@ -137,7 +131,7 @@ mod tests {
     };
 
     const TEST_SEED: &[u8] = b"test1234";
-    const TEST_MSG: &[u8] = b"hello algorand";
+    const TEST_MSG: &[u8] = b"hello";
 
     // Generates a real compressed signature over TEST_MSG.
     fn make_compressed_sig() -> CompressedSignature {

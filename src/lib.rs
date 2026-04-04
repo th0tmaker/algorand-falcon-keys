@@ -5,6 +5,7 @@ pub mod error;
 mod ffi;
 mod keygen;
 mod signature;
+mod zeroize;
 
 pub use error::{Error, SignatureError};
 pub use keygen::{derive_keypair, PrivateKey, PublicKey};
