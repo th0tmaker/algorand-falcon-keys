@@ -1,12 +1,18 @@
 // src/lib.rs
 
 mod constants;
-pub mod error;
 mod ffi;
 mod keygen;
 mod signature;
 mod zeroize;
 
-pub use error::{Error, SignatureError};
-pub use keygen::{derive_keypair, PrivateKey, PublicKey};
-pub use signature::{CompressedSignature, CtSignature};
+pub mod error;
+#[cfg(feature = "mnemonic")]
+pub mod mnemonic;
+
+pub use {
+    error::{Error, SignatureError},
+    keygen::{derive_keypair, PrivateKey, PublicKey},
+    signature::{CompressedSignature, CtSignature}
+};
+
