@@ -25,6 +25,8 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Signature(e) => Some(e),
+            #[cfg(feature = "mnemonic")]
+            Self::Mnemonic(e) => Some(e),
             _ => None,
         }
     }
