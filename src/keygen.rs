@@ -189,11 +189,13 @@ pub fn derive_keypair(seed: &[u8]) -> Result<(PrivateKey, PublicKey), Error> {
 
 /// Derives a Falcon-det1024 keypair from a BIP-39 mnemonic and optional passphrase.
 ///
-/// Convenience wrapper that chains [`mnemonic::seed_from_mnemonic`] and [`derive_keypair`]:
-/// the mnemonic is validated, a 48-byte Falcon seed is derived, and the seed is passed
-/// to [`derive_keypair`]. The intermediate seed is zeroed before returning.
+/// Convenience wrapper that chains [`crate::mnemonic::seed_from_mnemonic`]
+/// and [`derive_keypair`]: The mnemonic phrase is validated, a 48-byte
+/// Falcon seed is derived, and the seed is passed to [`derive_keypair`]
+/// in order to return a tuple holding [`PrivateKey`] and [`PublicKey`]. 
 ///
-/// Pass an empty string for `passphrase` to use no passphrase.
+/// Pass an empty string for `passphrase` if no passphrase was used to
+/// derive the 48-byte Falcon seed.
 #[cfg(feature = "mnemonic")]
 pub fn derive_keypair_from_mnemonic(
     mnemonic: &[&str; crate::mnemonic::MNEMONIC_LEN],
