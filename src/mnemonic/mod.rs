@@ -7,8 +7,7 @@ use pbkdf2::pbkdf2_hmac;
 use sha2::{Digest, Sha256, Sha512};
 use unicode_normalization::UnicodeNormalization;
 
-use crate::error::{Error, MnemonicError};
-use crate::zeroize::Zeroize;
+use crate::{error::{Error, MnemonicError}, zeroize::Zeroize};
 
 pub const ENTROPY_LEN: usize = 32;
 pub const CHECKSUM_BITS: usize = 8; // entropy_bits / 32
@@ -22,7 +21,8 @@ const HKDF_SALT: &str = "bip39-falcon-seed-salt-v1";
 const HKDF_INFO: &str = "Falcon1024 seed v1";
 
 // HKDF-SHA512 can output at most 255 × 64 = 16,320 bytes.
-// This assertion fires at compile time if FALCON_SEED_SIZE ever exceeds that.
+// HKDF spec: 255 blocks × 64 (SHA-512 has 512-bit/64-byte block size).
+// This assert fires at compile time in case FALCON_SEED_SIZE ever exceeds that.
 const _: () = assert!(
     FALCON_SEED_SIZE <= 255 * 64,
     "FALCON_SEED_SIZE exceeds HKDF-SHA512 maximum output length"
@@ -52,45 +52,46 @@ const _: () = assert!(
 /// checksum bits), so it is not freely chosen — it is fully determined by the
 /// other 23 words. Mistyping any word produces a checksum mismatch on decode.
 pub fn entropy_to_mnemonic(entropy: &[u8; ENTROPY_LEN]) -> [&'static str; MNEMONIC_LEN] {
-    // SHA-256(entropy); the first CHECKSUM_BITS bits become the checksum.
+    // SHA-256(entropy); the first {CHECKSUM_BITS} bits become the checksum
     let h = Sha256::digest(entropy);
-    // Shift right by (8 - CHECKSUM_BITS) to align the top bits to the LSB.
+    // Shift right by (8 - CHECKSUM_BITS) to align the top bits to the LSB
     let checksum = (h[0] >> (8 - CHECKSUM_BITS)) as u32;
 
-    let mut out = [""; MNEMONIC_LEN];
-    // acc is a sliding bit buffer filled 8 bits at a time (one entropy byte)
-    // and drained 11 bits at a time (one word index).
+    // `acc` is a sliding bit buffer filled 8 bits at a time (one entropy byte)
+    // and drained 11 bits at a time (one word index)
     let mut acc: u32 = 0;
     let mut bits: usize = 0;
     let mut word_idx: usize = 0;
+    let mut out = [""; MNEMONIC_LEN];
 
     for &byte in entropy {
-        // Shift acc left by 8 and load the next entropy byte into the low bits.
+        // Shift `acc` left by 8 and load the next entropy byte into the low bits
         acc = (acc << 8) | byte as u32;
         bits += 8;
 
-        // Adding 8 bits to a remainder that is always < 11 gives at most 18 bits —
-        // never enough for two extractions, so if suffices here.
+        // Adding 8 bits to a remainder that is always < 11 gives at most 18 bits,
+        // which is never enough for two extractions, hence no need for a `while` loop
         if bits >= BITS_PER_WORD {
             bits -= BITS_PER_WORD;
-            // Shift acc right to bring the next 11 bits to the LSB position,
-            // then mask to exactly 11 bits (0x7FF = 0b11111111111 = 2047).
+            // Shift `acc` right to bring the next 11 bits to the LSB position,
+            // then mask to exactly 11 bits (0x7FF = 0b11111111111 = 2047)
             let index = ((acc >> bits) & 0x7FF) as usize;
             out[word_idx] = words::WORDS[index];
             word_idx += 1;
-            // Clear the consumed bits, keeping only the remainder.
+            // Clear the consumed bits, keeping only the remainder
             acc &= (1 << bits) - 1;
         }
     }
 
     // After processing all entropy bytes, `bits` holds the leftover count (3 for
-    // 256-bit entropy: 256 % 11 = 3). Shift acc left to make room, then OR in
-    // the 8-bit checksum. This gives exactly 11 bits for the final word.
+    // 256-bit entropy: 256 % 11 = 3). Shift `acc` left to make room, then OR in
+    // the 8-bit checksum. This gives exactly 11 bits for the final word
     acc = (acc << CHECKSUM_BITS) | checksum;
     bits += CHECKSUM_BITS;
     debug_assert_eq!(bits, BITS_PER_WORD); // must be exactly 11 bits here
     out[word_idx] = words::WORDS[acc as usize];
 
+    // Return the output mnemonic phrase
     out
 }
 
@@ -103,25 +104,27 @@ pub fn entropy_to_mnemonic(entropy: &[u8; ENTROPY_LEN]) -> [&'static str; MNEMON
 ///
 /// Returns `Err` if any word is not in the BIP-39 wordlist or the checksum does not match.
 pub fn mnemonic_to_entropy(mnemonic: &[&str; MNEMONIC_LEN]) -> Result<[u8; ENTROPY_LEN], Error> {
+    // Create a mutable buffer of zeroed bytes to store the entropy
     let mut entropy = [0u8; ENTROPY_LEN];
-    // acc is a sliding bit buffer filled 11 bits at a time (one word index)
-    // and drained 8 bits at a time (one entropy byte).
+
+    // `acc` is a sliding bit buffer filled 11 bits at a time (one word index)
+    // and drained 8 bits at a time (one entropy byte)
     let mut acc: u32 = 0;
     let mut bits: usize = 0;
     let mut out_idx: usize = 0;
 
     for &word in mnemonic {
-        // Binary search is valid because the BIP-39 wordlist is sorted alphabetically.
+        // Binary search is valid because the BIP-39 wordlist is sorted alphabetically
         let index = words::WORDS
             .binary_search_by(|&w| w.cmp(word))
             .map_err(|_| MnemonicError::UnknownWord)? as u32;
 
-        // Shift acc left by 11 and load the word index into the low bits.
+        // Shift `acc` left by 11 and load the word index into the low bits
         acc = (acc << BITS_PER_WORD) | index;
         bits += BITS_PER_WORD;
 
-        // Adding 11 bits to a remainder that is always < 8 gives at most 18 bits —
-        // enough for 1 or 2 byte extractions, so while is required here.
+        // Adding 11 bits to a remainder that is always < 8 gives at most 18 bits,
+        // which can amount to 1 or 2 byte extractions, hence `while` loop needed
         while bits >= 8 && out_idx < ENTROPY_LEN {
             bits -= 8;
             entropy[out_idx] = (acc >> bits) as u8;
@@ -141,6 +144,7 @@ pub fn mnemonic_to_entropy(mnemonic: &[&str; MNEMONIC_LEN]) -> Result<[u8; ENTRO
         return Err(MnemonicError::ChecksumMismatch.into());
     }
 
+    // Return the entropy
     Ok(entropy)
 }
 
@@ -163,14 +167,14 @@ pub fn seed_from_mnemonic(
     mnemonic: &[&str; MNEMONIC_LEN],
     passphrase: &str,
 ) -> Result<[u8; FALCON_SEED_SIZE], Error> {
-    // Validate structure and checksum before deriving any secrets.
+    // Validate structure and checksum before deriving any secrets
     mnemonic_to_entropy(mnemonic)?;
 
-    // NFKD-normalize the mnemonic sentence and passphrase as required by BIP-39.
+    // NFKD-normalize the mnemonic sentence and passphrase as required by BIP-39
     let sentence: String = mnemonic.join(" ").nfkd().collect();
     let salt = format!("mnemonic{}", passphrase.nfkd().collect::<String>());
 
-    // PBKDF2-HMAC-SHA512: canonical BIP-39 seed derivation.
+    // PBKDF2-HMAC-SHA512: canonical BIP-39 seed derivation
     let mut bip39_seed = [0u8; BIP39_SEED_SIZE];
     pbkdf2_hmac::<Sha512>(
         sentence.as_bytes(),
@@ -181,15 +185,16 @@ pub fn seed_from_mnemonic(
 
     // HKDF-SHA512: collapse the 64-byte BIP-39 seed to the 48-byte Falcon seed.
     // Domain-separated with a Falcon-specific salt and info string so the output
-    // is independent from any other BIP-39 key derivation use of the same seed.
+    // is independent from any other BIP-39 key derivation use of the same seed
     let hkdf = Hkdf::<Sha512>::new(Some(HKDF_SALT.as_bytes()), &bip39_seed);
     let mut out = [0u8; FALCON_SEED_SIZE];
     hkdf.expand(HKDF_INFO.as_bytes(), &mut out)
         .map_err(|_| MnemonicError::SeedDerivation)?;
 
-    // Zero the intermediate BIP-39 seed — it must not outlive this stack frame.
+    // Zeroize the intermediate BIP-39 seed — it must not outlive this stack frame
     bip39_seed.zeroize();
 
+    // Return the output 48-byte Falcon seed
     Ok(out)
 }
 
@@ -200,6 +205,110 @@ mod tests {
 
     // Official BIP-39 test vectors for 256-bit entropy.
     // Source: https://github.com/trezor/python-mnemonic/blob/master/vectors.json
+
+    fn hex_to_entropy(hex: &str) -> [u8; ENTROPY_LEN] {
+        let mut out = [0u8; ENTROPY_LEN];
+        for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
+            out[i] = u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16).unwrap();
+        }
+        out
+    }
+
+    fn split_mnemonic(s: &str) -> [&str; MNEMONIC_LEN] {
+        let words: Vec<&str> = s.split(' ').collect();
+        words.try_into().unwrap()
+    }
+
+    // ── BIP-39 official test vectors ─────────────────────────────────────────
+
+    #[test]
+    fn bip39_vectors_encode() {
+        let vectors: &[(&str, &str)] = &[
+            (
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+            ),
+            (
+                "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+                "legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth title",
+            ),
+            (
+                "8080808080808080808080808080808080808080808080808080808080808080",
+                "letter advice cage absurd amount doctor acoustic avoid letter advice cage absurd amount doctor acoustic avoid letter advice cage absurd amount doctor acoustic bless",
+            ),
+            (
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote",
+            ),
+            (
+                "68a79eaca2324873eacc50cb9c6eca8cc68ea5d936f98787c60c7ebc74e6ce7c",
+                "hamster diagram private dutch cause delay private meat slide toddler razor book happy fancy gospel tennis maple dilemma loan word shrug inflict delay length",
+            ),
+            (
+                "9f6a2878b2520799a44ef18bc7df394e7061a224d2c33cd015b157d746869863",
+                "panda eyebrow bullet gorilla call smoke muffin taste mesh discover soft ostrich alcohol speed nation flash devote level hobby quick inner drive ghost inside",
+            ),
+            (
+                "066dca1a2bb7e8a1db2832148ce9933eea0f3ac9548d793112d9a95c9407efad",
+                "all hour make first leader extend hole alien behind guard gospel lava path output census museum junior mass reopen famous sing advance salt reform",
+            ),
+            (
+                "f585c11aec520db57dd353c69554b21a89b20fb0650966fa0a9d6f74fd989d8f",
+                "void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve unfold",
+            ),
+        ];
+
+        for (entropy_hex, expected_mnemonic) in vectors {
+            let entropy = hex_to_entropy(entropy_hex);
+            let mnemonic = entropy_to_mnemonic(&entropy);
+            assert_eq!(mnemonic, split_mnemonic(expected_mnemonic), "encode failed for entropy {entropy_hex}");
+        }
+    }
+
+    #[test]
+    fn bip39_vectors_decode() {
+        let vectors: &[(&str, &str)] = &[
+            (
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+            ),
+            (
+                "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+                "legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth title",
+            ),
+            (
+                "8080808080808080808080808080808080808080808080808080808080808080",
+                "letter advice cage absurd amount doctor acoustic avoid letter advice cage absurd amount doctor acoustic avoid letter advice cage absurd amount doctor acoustic bless",
+            ),
+            (
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote",
+            ),
+            (
+                "68a79eaca2324873eacc50cb9c6eca8cc68ea5d936f98787c60c7ebc74e6ce7c",
+                "hamster diagram private dutch cause delay private meat slide toddler razor book happy fancy gospel tennis maple dilemma loan word shrug inflict delay length",
+            ),
+            (
+                "9f6a2878b2520799a44ef18bc7df394e7061a224d2c33cd015b157d746869863",
+                "panda eyebrow bullet gorilla call smoke muffin taste mesh discover soft ostrich alcohol speed nation flash devote level hobby quick inner drive ghost inside",
+            ),
+            (
+                "066dca1a2bb7e8a1db2832148ce9933eea0f3ac9548d793112d9a95c9407efad",
+                "all hour make first leader extend hole alien behind guard gospel lava path output census museum junior mass reopen famous sing advance salt reform",
+            ),
+            (
+                "f585c11aec520db57dd353c69554b21a89b20fb0650966fa0a9d6f74fd989d8f",
+                "void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve unfold",
+            ),
+        ];
+
+        for (entropy_hex, mnemonic_str) in vectors {
+            let expected_entropy = hex_to_entropy(entropy_hex);
+            let mnemonic = split_mnemonic(mnemonic_str);
+            let recovered = mnemonic_to_entropy(&mnemonic).unwrap();
+            assert_eq!(recovered, expected_entropy, "decode failed for mnemonic: {mnemonic_str}");
+        }
+    }
 
     // ── entropy_to_mnemonic ──────────────────────────────────────────────────
 
