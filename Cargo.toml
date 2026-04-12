@@ -3,6 +3,10 @@ name = "algorand-falcon-keys"
 version = "0.1.0"
 edition = "2024"
 build = "build.rs"
+authors = ["th0tmaker"]
+description = "Rust bindings for deterministic Falcon-1024 post-quantum key generation, signing, and verification"
+license = "MIT"
+repository = "https://github.com/th0tmaker/algorand-falcon-keys"
 
 [dependencies]
 hkdf = { version = "0.12", optional = true }
@@ -11,7 +15,7 @@ sha2 = { version = "0.10", optional = true }
 unicode-normalization = { version = "0.1", optional = true }
 
 [features]
-mnemonic = ["dep:sha2", "dep:pbkdf2", "dep:hkdf", "dep:unicode-normalization"]
+mnemonic = ["dep:hkdf", "dep:pbkdf2", "dep:sha2", "dep:unicode-normalization"]
 
 [build-dependencies]
 cc = "1.0"
