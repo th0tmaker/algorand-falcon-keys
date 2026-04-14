@@ -13,8 +13,8 @@ fn main() {
         .file("vendor/falcon/shake.c")
         .file("vendor/falcon/sign.c")
         .file("vendor/falcon/vrfy.c")
-        .define("FALCON_FPEMU", "1")   // use integer FP emulation
-        .define("FALCON_FMA", "0")     // disable fused multiply-add
-        .define("FALCON_AVX2", "0")    // disable AVX2 intrinsics
+        .define("FALCON_FPEMU", "1")  // use integer FP emulation
+        .define("FALCON_FMA", "0")    // disable fused multiply-add
+        .define("FALCON_AVX2", "0")   // disable AVX2 intrinsics
         .compile("falcon_det1024");
 }

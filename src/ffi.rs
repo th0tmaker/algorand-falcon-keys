@@ -2,8 +2,7 @@
 
 use std::os::raw::{c_int, c_void};
 
-use crate::constants::SHAKE256_STATE_WORDS;
-use crate::zeroize::Zeroize;
+use crate::{constants::SHAKE256_STATE_WORDS, zeroize::Zeroize};
 
 /// Sponge state for the SHAKE-256 extendable-output function, used as Falcon's PRNG.
 ///
@@ -15,7 +14,7 @@ use crate::zeroize::Zeroize;
 #[derive(Debug, Default)]
 #[repr(C)]
 pub struct Shake256Context {
-    /// The 1600-bit (200-byte) Keccak-f[1600] permutation state, stored as 25 × u64.
+    /// The 1600-bit (200-byte) Keccak-f[1600] permutation state, stored as 25 × u64 words/lanes.
     /// Each call to `shake256_init_prng_from_seed` loads a unique seed here,
     /// producing an independent PRNG stream. Never share this across contexts.
     pub st: [u64; SHAKE256_STATE_WORDS],

@@ -24,10 +24,10 @@ use crate::{
 pub struct PublicKey([u8; FALCON_DET1024_PUBKEY_SIZE]);
 
 impl PublicKey {
-    /// Instantiates `self` from input `bytes` argument with validation.
-    /// 
-    /// Returns `Err(Error::InvalidPublicKey)` if the `bytes`
-    /// encode into an invalid `self`.
+    /// Parses and validates a [`PublicKey`] from its encoded byte representation.
+    ///
+    /// Returns `Err(Error::InvalidPublicKey)` if the bytes do not decode into
+    /// valid NTT coefficients.
     pub fn from_bytes(bytes: &[u8; FALCON_DET1024_PUBKEY_SIZE]) -> Result<Self, Error> {
         let mut h = [0u16; FALCON_DET1024_N];
 
@@ -93,7 +93,7 @@ impl PublicKey {
 
 /// A Falcon-det1024 private key.
 ///
-/// Wraps the `FALCON_DET1024_PRIVKEY_SIZE`-byte encoding produced by keygen.
+/// Wraps the `FALCON_DET1024_PRIVKEY_SIZE` byte encoding produced by keygen.
 /// The inner bytes are secret and zeroed on drop — do not clone or persist
 /// without deliberate intent. Obtain via `derive_keypair` or `from_bytes`.
 pub struct PrivateKey([u8; FALCON_DET1024_PRIVKEY_SIZE]);
@@ -105,7 +105,7 @@ impl Drop for PrivateKey {
 }
 
 impl PrivateKey {
-    /// Instantiates `self` from `bytes` **without** validation, consuming the buffer.
+    /// Wraps raw key material into a [`PrivateKey`] **without** validation, consuming the buffer.
     ///
     /// The caller's array is moved in and zeroed after the key material is copied
     /// into `self`. Invalid bytes are not rejected here — they will surface as
@@ -216,7 +216,9 @@ mod tests {
 
     const TEST_SEED: &[u8] = b"test1234";
     const ALT_SEED: &[u8] = b"different";
-    const TEST_MSG: &[u8] = b"hello algorand";
+    const TEST_MSG: &[u8] = b"hello";
+
+    // ─── PublicKey tests ─────────────────────────────────────────────────────────
 
     #[test]
     fn public_key_as_bytes() {
@@ -247,8 +249,11 @@ mod tests {
         let key = PublicKey::from_bytes(&pubkey_bytes).unwrap();
         let cloned = key.clone();
 
-        assert_eq!(key, cloned); // PartialEq: same bytes
-        assert_ne!(key, PublicKey(pubkey_bytes.map(|b| b.wrapping_add(1)))); // different bytes -> not equal
+        // PartialEq: same bytes, should be equal
+        assert_eq!(key, cloned);
+        // Different bytes: should not be equal
+        assert_ne!(key, PublicKey(pubkey_bytes.map(|b| b.wrapping_add(1))));
+
     }
 
     #[test]
@@ -259,6 +264,8 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), Error::InvalidPublicKey));
     }
+
+    // ─── PrivateKey tests ────────────────────────────────────────────────────────
 
     #[test]
     fn private_key_from_seed() {
@@ -305,6 +312,17 @@ mod tests {
     }
 
     #[test]
+    fn private_key_from_bytes_roundtrip() {
+        let (privkey, _) = derive_keypair(TEST_SEED).unwrap();
+        let bytes = *privkey.as_bytes();
+        let restored = PrivateKey::from_bytes(bytes);
+
+        assert_eq!(restored.as_bytes(), &bytes);
+    }
+
+    // ─── PublicKey & CompressedSignature Verification tests ──────────────────────
+
+    #[test]
     fn verify_compressed_valid() {
         let (privkey, pubkey) = derive_keypair(TEST_SEED).unwrap();
         let sig = privkey.sign(TEST_MSG).unwrap();
@@ -334,6 +352,8 @@ mod tests {
             Err(Error::Signature(SignatureError::VerificationFailed))
         ));
     }
+
+    // ─── PublicKey & CtSignature Verification tests ──────────────────────────────
 
     #[test]
     fn verify_ct_valid() {
@@ -366,12 +386,82 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn private_key_from_bytes_roundtrip() {
-        let (privkey, _) = derive_keypair(TEST_SEED).unwrap();
-        let bytes = *privkey.as_bytes();
-        let restored = PrivateKey::from_bytes(bytes);
+    // ─── Keypair From Mnemonic tests ─────────────────────────────────────────────
 
-        assert_eq!(restored.as_bytes(), &bytes);
+    #[cfg(feature = "mnemonic")]
+    #[test]
+    fn derive_keypair_from_mnemonic_is_deterministic() {
+        // All-zeros entropy mnemonic: 23 × "abandon" + "art".
+        // Tests the full chain: mnemonic → seed → keypair.
+        let mnemonic = [
+            "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
+            "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
+            "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
+            "abandon", "abandon", "abandon", "abandon", "abandon", "art",
+        ];
+
+        let (privkey1, pubkey1) = derive_keypair_from_mnemonic(&mnemonic, "").unwrap();
+        let (privkey2, pubkey2) = derive_keypair_from_mnemonic(&mnemonic, "").unwrap();
+
+        // Same mnemonic + passphrase must always produce identical keys.
+        assert_eq!(privkey1.as_bytes(), privkey2.as_bytes());
+        assert_eq!(pubkey1.as_bytes(), pubkey2.as_bytes());
+
+        // Different passphrase must produce different keys.
+        let (privkey3, pubkey3) = derive_keypair_from_mnemonic(&mnemonic, "passphrase").unwrap();
+        assert_ne!(privkey1.as_bytes(), privkey3.as_bytes());
+        assert_ne!(pubkey1.as_bytes(), pubkey3.as_bytes());
+
+        // Same non-empty passphrase must also be deterministic.
+        let (privkey4, pubkey4) = derive_keypair_from_mnemonic(&mnemonic, "passphrase").unwrap();
+        assert_eq!(privkey3.as_bytes(), privkey4.as_bytes());
+        assert_eq!(pubkey3.as_bytes(), pubkey4.as_bytes());
+    }
+
+    #[cfg(feature = "mnemonic")]
+    #[test]
+    fn derive_keypair_from_mnemonic_produces_usable_keys() {
+        // Verify that keys derived from a mnemonic can actually sign and verify —
+        // not just that they look structurally valid.
+        let mnemonic = [
+            "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
+            "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
+            "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
+            "abandon", "abandon", "abandon", "abandon", "abandon", "art",
+        ];
+
+        let (privkey, pubkey) = derive_keypair_from_mnemonic(&mnemonic, "").unwrap();
+        let sig = privkey.sign(TEST_MSG).unwrap();
+
+        assert!(pubkey.verify_compressed(&sig, TEST_MSG).is_ok());
+    }
+
+    #[cfg(feature = "mnemonic")]
+    #[test]
+    fn derive_keypair_from_mnemonic_invalid_mnemonic_returns_error() {
+        // A mnemonic with an unknown word should propagate a MnemonicError
+        // rather than panicking or producing garbage keys.
+        let bad_mnemonic = [
+            "notaword", "abandon", "abandon", "abandon", "abandon", "abandon",
+            "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
+            "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
+            "abandon", "abandon", "abandon", "abandon", "abandon", "art",
+        ];
+
+        let result = derive_keypair_from_mnemonic(&bad_mnemonic, "");
+        assert!(matches!(
+            result,
+            Err(Error::Mnemonic(crate::error::MnemonicError::UnknownWord))
+        ));
+    }
+
+    #[test]
+    fn private_key_from_bytes_garbage_fails_at_sign_time() {
+        // Using `from_bytes` will accept any bytes without validation, hence invalid
+        // key material must surface as an error at sign time, not at construction.
+        let garbage = [0xFFu8; FALCON_DET1024_PRIVKEY_SIZE];
+        let privkey = PrivateKey::from_bytes(garbage);
+
+        assert!(privkey.sign(TEST_MSG).is_err());
     }
 }

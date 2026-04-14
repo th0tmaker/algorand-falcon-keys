@@ -22,10 +22,10 @@ use crate::{
 pub struct CompressedSignature(Box<[u8]>);
 
 impl CompressedSignature {
-    /// Instantiates `self` from input `bytes` argument with validation.
-    /// 
-    /// Returns `Err(Error::Signature(...))` if the `bytes`
-    /// encode into a structurally malformed `self`.
+    /// Parses and validates a [`CompressedSignature`] from raw bytes.
+    ///
+    /// Returns `Err(Error::Signature(...))` if the bytes are structurally malformed
+    /// (wrong header, unsupported salt version, or out-of-range length).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
         // Must have at least a header byte and a salt version byte
         if bytes.len() < 2 {
@@ -90,10 +90,10 @@ impl CompressedSignature {
 pub struct CtSignature([u8; FALCON_DET1024_SIG_CT_SIZE]);
 
 impl CtSignature {
-    /// Instantiates `self` from input `bytes` argument with validation.
-    /// 
-    /// Returns `Err(Error::Signature(...))` if the `bytes`
-    /// encode into a structurally malformed `self`.
+    /// Parses and validates a [`CtSignature`] from its fixed-size byte representation.
+    ///
+    /// Returns `Err(Error::Signature(...))` if the bytes carry an invalid header
+    /// or an unsupported salt version.
     pub fn from_bytes(bytes: &[u8; FALCON_DET1024_SIG_CT_SIZE]) -> Result<Self, Error> {
         // First byte must carry the correct det1024 CT-format header.
         if bytes[0] != FALCON_DET1024_SIG_CT_HEADER {
@@ -133,7 +133,7 @@ mod tests {
     const TEST_SEED: &[u8] = b"test1234";
     const TEST_MSG: &[u8] = b"hello";
 
-    // Generates a real compressed signature over TEST_MSG.
+    // Generates a compressed signature over TEST_MSG.
     fn make_compressed_sig() -> CompressedSignature {
         let (privkey, _) = derive_keypair(TEST_SEED).unwrap();
         privkey.sign(TEST_MSG).unwrap()
@@ -155,7 +155,7 @@ mod tests {
         bytes
     }
 
-    // --- CompressedSignature tests ---
+    // ─── CompressedSignature tests ─────────────────────────────────────────────────────────
 
     #[test]
     fn from_bytes_and_as_bytes() {
@@ -216,7 +216,7 @@ mod tests {
         assert_eq!(ct.unwrap().as_bytes()[0], FALCON_DET1024_SIG_CT_HEADER);
     }
 
-    // --- CtSignature tests ---
+    // ─── CtSignature tests ─────────────────────────────────────────────────────────────────
 
     #[test]
     fn ct_from_bytes_and_as_bytes() {
