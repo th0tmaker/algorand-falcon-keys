@@ -15,9 +15,9 @@ use crate::{
 /// A Falcon-det1024 signature in compressed (Huffman-coded) format.
 ///
 /// **WARNING**: This type enforces structural integrity only: the header byte, salt version,
-/// and length are validated on construction. A well-formed `self` may still fail verification
-/// as this type does not guarantee cryptographic validity — that must be established
-/// separately by calling `verify_compressed` with the corresponding public key and message.
+/// and length are validated on construction. A well-formed [`CompressedSignature`] may still 
+/// fail verification as this type does not guarantee cryptographic validity — that must be 
+/// established separately by calling `verify_compressed` with the corresponding public key and message.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompressedSignature(Box<[u8]>);
 
@@ -44,21 +44,21 @@ impl CompressedSignature {
             return Err(Error::Signature(SignatureError::TooLong));
         }
 
-        // Return `CompressedSignature` type from input bytes
+        // Wrap the input bytes as the type and return
         Ok(Self(bytes.into()))
     }
 
-    /// Returns the underlying bytes of `self`.
+    /// Borrows the variable-length encoding as a byte slice, without copying.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
-    /// Returns the salt version embedded in `self`.
+    /// Returns the salt version byte embedded in the [`CompressedSignature`] encoding.
     pub fn salt_version(&self) -> u8 {
         self.0[1]
     }
 
-    /// Converts `self` to [`CtSignature`] with validation.
+    /// Converts [`CompressedSignature`] to [`CtSignature`] with validation.
     pub fn to_ct(&self) -> Result<CtSignature, Error> {
         let mut ct = [0u8; FALCON_DET1024_SIG_CT_SIZE];
 
@@ -83,9 +83,9 @@ impl CompressedSignature {
 /// CT format is always exactly [`FALCON_DET1024_SIG_CT_SIZE`] bytes.
 ///
 /// **WARNING**: This type enforces structural integrity only: the header byte, salt version,
-/// and length are validated on construction. A well-formed `self` may still fail verification
-/// as this type does not guarantee cryptographic validity — that must be established
-/// separately by calling `verify_compressed` with the corresponding public key and message.
+/// and length are validated on construction. A well-formed [`CtSignature`] may still fail 
+/// verification as this type does not guarantee cryptographic validity — that must be 
+/// established separately by calling `verify_compressed` with the corresponding public key and message.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CtSignature([u8; FALCON_DET1024_SIG_CT_SIZE]);
 
@@ -107,12 +107,17 @@ impl CtSignature {
         Ok(Self(*bytes))
     }
 
-    /// Returns the underlying bytes of `self`.
+    /// Borrows the [`FALCON_DET1024_SIG_CT_SIZE`]-byte encoding without copying.
     pub fn as_bytes(&self) -> &[u8; FALCON_DET1024_SIG_CT_SIZE] {
         &self.0
     }
 
-    /// Returns the salt version embedded in `self`.
+    /// Copies the [`FALCON_DET1024_SIG_CT_SIZE`]-byte encoding into an owned array.
+    pub fn to_bytes(&self) -> [u8; FALCON_DET1024_SIG_CT_SIZE] {
+        self.0
+    }
+
+    /// Returns the salt version byte embedded in the [`CtSignature`] encoding.
     pub fn salt_version(&self) -> u8 {
         self.0[1]
     }

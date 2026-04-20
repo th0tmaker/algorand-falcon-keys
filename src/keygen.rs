@@ -42,12 +42,17 @@ impl PublicKey {
         Ok(Self(*bytes))
     }
 
-    /// Returns the underlying bytes of `self`.
+    /// Borrows the [`FALCON_DET1024_PUBKEY_SIZE`]-byte encoding without copying.
     pub fn as_bytes(&self) -> &[u8; FALCON_DET1024_PUBKEY_SIZE] {
         &self.0
     }
 
-    /// Verifies a [`CompressedSignature`] over a `message` against `self`.
+    /// Copies the [`FALCON_DET1024_PUBKEY_SIZE`]-byte encoding into an owned array.
+    pub fn to_bytes(&self) -> [u8; FALCON_DET1024_PUBKEY_SIZE] {
+        self.0
+    }
+
+    /// Verifies a [`CompressedSignature`] over a `message` against [`PublicKey`].
     pub fn verify_compressed(
         &self,
         signature: &CompressedSignature,
@@ -72,7 +77,7 @@ impl PublicKey {
         }
     }
 
-    /// Verifies a [`CtSignature`] over a `message` against `self`.
+    /// Verifies a [`CtSignature`] over a `message` against [`PublicKey`].
     pub fn verify_ct(&self, signature: &CtSignature, message: &[u8]) -> Result<(), Error> {
         let ret = unsafe {
             falcon_det1024_verify_ct(
@@ -108,7 +113,7 @@ impl PrivateKey {
     /// Wraps raw key material into a [`PrivateKey`] **without** validation, consuming the buffer.
     ///
     /// The caller's array is moved in and zeroed after the key material is copied
-    /// into `self`. Invalid bytes are not rejected here — they will surface as
+    /// into [`PrivateKey`]. Invalid bytes are not rejected here — they will surface as
     /// `Err(Error::Falcon(...))` when `sign` is called and the vendor C library
     /// decodes the key into its internal polynomial representation (f, g, F, G
     /// coefficients) at sign time.
@@ -118,13 +123,13 @@ impl PrivateKey {
         key
     }
 
-    /// Returns the underlying bytes of `self`.
+    /// Borrows the [`FALCON_DET1024_PRIVKEY_SIZE`]-byte encoding without copying.
     pub fn as_bytes(&self) -> &[u8; FALCON_DET1024_PRIVKEY_SIZE] {
         &self.0
     }
 
     /// Returns an instance of [`CompressedSignature`] that was produced
-    /// by signing a `message` with `self`
+    /// by signing a `message` with [`PrivateKey`].
     pub fn sign(&self, message: &[u8]) -> Result<CompressedSignature, Error> {
         let mut sig = [0u8; FALCON_DET1024_SIG_COMPRESSED_MAXSIZE];
         let mut sig_len = 0usize;
