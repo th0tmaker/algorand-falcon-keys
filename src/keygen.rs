@@ -24,7 +24,7 @@ use crate::{
 pub struct PublicKey([u8; FALCON_DET1024_PUBKEY_SIZE]);
 
 impl PublicKey {
-    /// Parses and validates a [`PublicKey`] from its encoded byte representation.
+    /// Parses and validates a [PublicKey] from its encoded byte representation.
     ///
     /// Returns `Err(Error::InvalidPublicKey)` if the bytes do not decode into
     /// valid NTT coefficients.
@@ -42,17 +42,17 @@ impl PublicKey {
         Ok(Self(*bytes))
     }
 
-    /// Borrows the [`FALCON_DET1024_PUBKEY_SIZE`]-byte encoding without copying.
+    /// Borrows the [FALCON_DET1024_PUBKEY_SIZE]-byte encoding without copying.
     pub fn as_bytes(&self) -> &[u8; FALCON_DET1024_PUBKEY_SIZE] {
         &self.0
     }
 
-    /// Copies the [`FALCON_DET1024_PUBKEY_SIZE`]-byte encoding into an owned array.
+    /// Copies the [FALCON_DET1024_PUBKEY_SIZE]-byte encoding into an owned array.
     pub fn to_bytes(&self) -> [u8; FALCON_DET1024_PUBKEY_SIZE] {
         self.0
     }
 
-    /// Verifies a [`CompressedSignature`] over a `message` against [`PublicKey`].
+    /// Verifies a [CompressedSignature] over a `message` against [PublicKey].
     pub fn verify_compressed(
         &self,
         signature: &CompressedSignature,
@@ -77,7 +77,7 @@ impl PublicKey {
         }
     }
 
-    /// Verifies a [`CtSignature`] over a `message` against [`PublicKey`].
+    /// Verifies a [CtSignature] over a `message` against [PublicKey].
     pub fn verify_ct(&self, signature: &CtSignature, message: &[u8]) -> Result<(), Error> {
         let ret = unsafe {
             falcon_det1024_verify_ct(
@@ -110,10 +110,10 @@ impl Drop for PrivateKey {
 }
 
 impl PrivateKey {
-    /// Wraps raw key material into a [`PrivateKey`] **without** validation, consuming the buffer.
+    /// Wraps raw key material into a [PrivateKey] **without** validation, consuming the buffer.
     ///
     /// The caller's array is moved in and zeroed after the key material is copied
-    /// into [`PrivateKey`]. Invalid bytes are not rejected here — they will surface as
+    /// into [PrivateKey]. Invalid bytes are not rejected here — they will surface as
     /// `Err(Error::Falcon(...))` when `sign` is called and the vendor C library
     /// decodes the key into its internal polynomial representation (f, g, F, G
     /// coefficients) at sign time.
@@ -123,13 +123,13 @@ impl PrivateKey {
         key
     }
 
-    /// Borrows the [`FALCON_DET1024_PRIVKEY_SIZE`]-byte encoding without copying.
+    /// Borrows the [FALCON_DET1024_PRIVKEY_SIZE]-byte encoding without copying.
     pub fn as_bytes(&self) -> &[u8; FALCON_DET1024_PRIVKEY_SIZE] {
         &self.0
     }
 
-    /// Returns an instance of [`CompressedSignature`] that was produced
-    /// by signing a `message` with [`PrivateKey`].
+    /// Returns an instance of [CompressedSignature] that was produced
+    /// by signing a `message` with [PrivateKey].
     pub fn sign(&self, message: &[u8]) -> Result<CompressedSignature, Error> {
         let mut sig = [0u8; FALCON_DET1024_SIG_COMPRESSED_MAXSIZE];
         let mut sig_len = 0usize;
@@ -158,7 +158,7 @@ impl PrivateKey {
 /// Any byte sequence is a valid seed — callers are responsible for providing
 /// a seed with sufficient entropy.
 ///
-/// Returns a tuple containing an instance of [`PrivateKey`] and [`PublicKey`]
+/// Returns a tuple containing an instance of [PrivateKey] and [PublicKey]
 /// or `Err(Error::Falcon(...))` if the vendor C library key generation fails. 
 pub fn derive_keypair(seed: &[u8]) -> Result<(PrivateKey, PublicKey), Error> {
     let mut rng = Shake256Context::default();
@@ -194,10 +194,10 @@ pub fn derive_keypair(seed: &[u8]) -> Result<(PrivateKey, PublicKey), Error> {
 
 /// Derives a Falcon-det1024 keypair from a BIP-39 mnemonic and optional passphrase.
 ///
-/// Convenience wrapper that chains [`crate::mnemonic::seed_from_mnemonic`]
-/// and [`derive_keypair`]: The mnemonic phrase is validated, a 48-byte
-/// Falcon seed is derived, and the seed is passed to [`derive_keypair`]
-/// in order to return a tuple holding [`PrivateKey`] and [`PublicKey`]. 
+/// Convenience wrapper that chains [crate::mnemonic::seed_from_mnemonic]
+/// and [derive_keypair]: The mnemonic phrase is validated, a 48-byte
+/// Falcon seed is derived, and the seed is passed to [derive_keypair]
+/// in order to return a tuple holding [PrivateKey] and [PublicKey]. 
 ///
 /// Pass an empty string for `passphrase` if no passphrase was used to
 /// derive the 48-byte Falcon seed.

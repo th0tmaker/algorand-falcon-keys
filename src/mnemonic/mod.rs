@@ -152,13 +152,13 @@ pub fn mnemonic_to_entropy(mnemonic: &[&str; MNEMONIC_LEN]) -> Result<[u8; ENTRO
 ///
 /// ### Derivation process
 ///
-/// 1. Validate the mnemonic (word list membership + checksum) via [`mnemonic_to_entropy`].
+/// 1. Validate the mnemonic (word list membership + checksum) via [mnemonic_to_entropy].
 /// 2. NFKD-normalize both the mnemonic sentence and the passphrase (required by BIP-39
 ///    so that visually identical Unicode strings always produce the same seed).
 /// 3. Run `PBKDF2-HMAC-SHA512` with 2048 iterations and the salt `"mnemonic" || passphrase`
 ///    to obtain the canonical 64-byte BIP-39 seed.
 /// 4. Collapse to 48 bytes via `HKDF-SHA512` using Falcon-specific salt and info strings.
-///    The 48-byte output is what gets passed directly to [`derive_keypair`].
+///    The 48-byte output is what gets passed directly to [derive_keypair].
 ///
 /// The intermediate 64-byte BIP-39 seed is zeroed in memory before this function returns.
 ///
