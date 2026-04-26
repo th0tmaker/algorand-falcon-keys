@@ -9,8 +9,8 @@ pub enum Error {
     Mnemonic(MnemonicError),
 }
 
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::InvalidPublicKey => f.write_str("invalid public key"),
             Self::Signature(e) => write!(f, "invalid signature: {e}"),
@@ -21,8 +21,8 @@ impl std::fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl core::error::Error for Error {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
             Self::Signature(e) => Some(e),
             #[cfg(feature = "mnemonic")]
@@ -55,8 +55,8 @@ pub enum SignatureError {
     VerificationFailed,
 }
 
-impl std::fmt::Display for SignatureError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for SignatureError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::InvalidHeader => f.write_str("invalid header"),
             Self::UnsupportedSaltVersion => f.write_str("unsupported salt version"),
@@ -68,7 +68,7 @@ impl std::fmt::Display for SignatureError {
     }
 }
 
-impl std::error::Error for SignatureError {}
+impl core::error::Error for SignatureError {}
 
 #[cfg(feature = "mnemonic")]
 #[derive(Debug)]
@@ -81,8 +81,8 @@ pub enum MnemonicError {
 }
 
 #[cfg(feature = "mnemonic")]
-impl std::fmt::Display for MnemonicError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for MnemonicError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::InvalidEntropyLength => f.write_str("entropy must be 32 bytes"),
             Self::InvalidPhraseLength  => f.write_str("phrase must contain 24 words"),
@@ -94,4 +94,4 @@ impl std::fmt::Display for MnemonicError {
 }
 
 #[cfg(feature = "mnemonic")]
-impl std::error::Error for MnemonicError {}
+impl core::error::Error for MnemonicError {}

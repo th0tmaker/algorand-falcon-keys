@@ -1,6 +1,6 @@
 // src/ffi.rs
 
-use std::os::raw::{c_int, c_void};
+use core::ffi::{c_int, c_void};
 
 use crate::{constants::SHAKE256_STATE_WORDS, zeroize::Zeroize};
 
@@ -205,7 +205,7 @@ mod tests {
 
         assert_eq!(sc.dptr, SHAKE256_RATE); // always SHAKE256_RATE after init
         assert_eq!(
-            std::mem::size_of::<Shake256Context>(),
+            core::mem::size_of::<Shake256Context>(),
             SHAKE256_CONTEXT_SIZE
         ); // 200 (st) + 8 (dptr)
         assert_ne!(sc.st, [0u64; SHAKE256_STATE_WORDS]); // seed absorbed into Keccak state

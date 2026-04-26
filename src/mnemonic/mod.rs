@@ -209,7 +209,7 @@ mod tests {
     fn hex_to_entropy(hex: &str) -> [u8; ENTROPY_LEN] {
         let mut out = [0u8; ENTROPY_LEN];
         for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
-            out[i] = u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16).unwrap();
+            out[i] = u8::from_str_radix(core::str::from_utf8(chunk).unwrap(), 16).unwrap();
         }
         out
     }

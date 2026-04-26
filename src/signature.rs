@@ -1,6 +1,6 @@
 // src/signature.rs
 
-use std::os::raw::c_void;
+use core::ffi::c_void;
 
 use crate::{
     constants::{

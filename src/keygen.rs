@@ -1,6 +1,6 @@
 // src/keygen.rs
 
-use std::os::raw::c_void;
+use core::ffi::c_void;
 
 use crate::{
     constants::{FALCON_DET1024_N, FALCON_DET1024_PRIVKEY_SIZE,
