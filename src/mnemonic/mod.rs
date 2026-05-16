@@ -23,8 +23,8 @@ const BIP39_SEED_SIZE: usize = 64;
 const HKDF_SALT: &str = "bip39-falcon-seed-salt-v1";
 const HKDF_INFO: &str = "Falcon1024 seed v1";
 
-// HKDF-SHA512 can output at most 255 × 64 = 16,320 bytes.
-// HKDF spec: 255 blocks × 64 (SHA-512 has 512-bit/64-byte block size).
+// HKDF-SHA512 can output at most 255 · 64 = 16,320 bytes.
+// HKDF spec: 255 blocks · 64 (SHA-512 has 512-bit/64-byte block size).
 // This assert fires at compile time in case FALCON_SEED_SIZE ever exceeds that.
 const _: () = assert!(
     FALCON_SEED_SIZE <= 255 * 64,
@@ -33,27 +33,19 @@ const _: () = assert!(
 
 /// Converts 32 bytes of entropy into a 24-word BIP-39 mnemonic phrase.
 ///
-/// ### BIP-39 encoding process
-///
 /// 1. Hash the entropy with SHA-256 and take the first `entropy_bits / 32` bits
 ///    as a checksum (8 bits for 256-bit entropy).
 /// 2. Append those checksum bits to the entropy → 264 bits total.
 /// 3. Split into 24 groups of 11 bits. Each 11-bit value (0–2047) is an index
 ///    into the 2048-word BIP-39 wordlist.
 ///
-/// ### Why SHA-256 for the checksum?
-///
-/// The checksum must be *unpredictable* without knowing the full entropy. A simple
-/// XOR or CRC would let anyone craft an arbitrary mnemonic that passes validation.
-/// SHA-256 being one-way means the only way to produce a valid final word is to
-/// know all preceding entropy bits — brute-forcing a "valid" mnemonic is no easier
-/// than random chance.
-///
-/// ### The last word
+/// SHA-256 is used for the checksum because it is one-way: the only way to produce a
+/// valid final word is to know all preceding entropy bits, making brute-forcing a
+/// "valid" mnemonic no easier than guessing the entropy outright.
 ///
 /// For 256-bit entropy the last word carries only 3 bits of true entropy (11 − 8
-/// checksum bits), so it is not freely chosen — it is fully determined by the
-/// other 23 words. Mistyping any word produces a checksum mismatch on decode.
+/// checksum bits) and is fully determined by the other 23 words. Mistyping any word
+/// produces a checksum mismatch on decode.
 pub fn entropy_to_mnemonic(entropy: &[u8; ENTROPY_LEN]) -> [&'static str; MNEMONIC_LEN] {
     // SHA-256(entropy); the first {CHECKSUM_BITS} bits become the checksum
     let h = Sha256::digest(entropy);
@@ -101,7 +93,7 @@ pub fn entropy_to_mnemonic(entropy: &[u8; ENTROPY_LEN]) -> [&'static str; MNEMON
 /// Decodes a 24-word BIP-39 mnemonic phrase back into the original 32 bytes of entropy.
 ///
 /// Each word is looked up in the BIP-39 wordlist (via binary search, since the list is
-/// sorted alphabetically) to recover its 11-bit index. The 24 × 11 = 264 bits are split
+/// sorted alphabetically) to recover its 11-bit index. The 24 · 11 = 264 bits are split
 /// into 256 bits of entropy and 8 bits of checksum. The checksum is verified against
 /// `SHA-256(entropy)[0]` before returning.
 ///
@@ -137,7 +129,7 @@ pub fn mnemonic_to_entropy(mnemonic: &[&str; MNEMONIC_LEN]) -> Result<[u8; ENTRO
     }
 
     // After all 24 words: 
-    // 24 × 11 − 32 × 8 = 264 − 256 = 8 bits remain — the checksum.
+    // 24 · 11 − 32 · 8 = 264 − 256 = 8 bits remain — the checksum.
     debug_assert_eq!(bits, CHECKSUM_BITS);
     debug_assert_eq!(out_idx, ENTROPY_LEN);
     let checksum = acc as u8;
@@ -153,17 +145,17 @@ pub fn mnemonic_to_entropy(mnemonic: &[&str; MNEMONIC_LEN]) -> Result<[u8; ENTRO
 
 /// Derives a 48-byte Falcon seed from a BIP-39 mnemonic and an optional passphrase.
 ///
-/// ### Derivation process
-///
-/// 1. Validate the mnemonic (word list membership + checksum) via [mnemonic_to_entropy].
+/// 1. Validate the mnemonic (word list membership + checksum) via [`mnemonic_to_entropy`].
 /// 2. NFKD-normalize both the mnemonic sentence and the passphrase (required by BIP-39
 ///    so that visually identical Unicode strings always produce the same seed).
 /// 3. Run `PBKDF2-HMAC-SHA512` with 2048 iterations and the salt `"mnemonic" || passphrase`
 ///    to obtain the canonical 64-byte BIP-39 seed.
 /// 4. Collapse to 48 bytes via `HKDF-SHA512` using Falcon-specific salt and info strings.
-///    The 48-byte output is what gets passed directly to [derive_keypair].
+///    The 48-byte output is what gets passed directly to [`crate::derive_keypair`].
 ///
 /// The intermediate 64-byte BIP-39 seed is zeroed in memory before this function returns.
+/// Always outputs a 48-byte seed (Algorand's Falcon convention). Keypairs generated via
+/// [`crate::derive_keypair`] with any other seed length cannot be recovered through this path.
 ///
 /// Pass an empty string for `passphrase` to use no passphrase.
 pub fn seed_from_mnemonic(
@@ -319,14 +311,14 @@ mod tests {
     #[test]
     fn encode_all_zero_entropy() {
         let mnemonic = entropy_to_mnemonic(&[0x00u8; ENTROPY_LEN]);
-        assert!(mnemonic[..23].iter().all(|&w| w == "abandon")); // 23 × "abandon"
+        assert!(mnemonic[..23].iter().all(|&w| w == "abandon")); // 23 · "abandon"
         assert_eq!(mnemonic[23], "art");                          // checksum word
     }
 
     #[test]
     fn encode_all_ff_entropy() {
         let mnemonic = entropy_to_mnemonic(&[0xFFu8; ENTROPY_LEN]);
-        assert!(mnemonic[..23].iter().all(|&w| w == "zoo")); // 23 × "zoo"
+        assert!(mnemonic[..23].iter().all(|&w| w == "zoo")); // 23 · "zoo"
         assert_eq!(mnemonic[23], "vote");                     // checksum word
     }
 

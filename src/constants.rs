@@ -25,7 +25,7 @@ pub const FALCON_DET1024_SIG_CT_HEADER: u8 = 0x5A | 0x80;         // 0xDA
 pub const FALCON_DET1024_CURRENT_SALT_VERSION: u8 = 0;
 
 // ─── SHAKE-256 Internal Layout (Keccak-1600 Sponge) ──────────────────────────
-pub(crate) const SHAKE256_STATE_WORDS: usize = 25; // 25 × u64 = 200 bytes of Keccak state
+pub(crate) const SHAKE256_STATE_WORDS: usize = 25; // 25 · u64 = 200 bytes of Keccak state
 #[cfg(test)]
 pub const SHAKE256_RATE: u64 = 136; // squeeze rate in bytes; dptr = 136 after init
 #[cfg(test)]

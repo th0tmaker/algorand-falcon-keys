@@ -6,34 +6,33 @@ use zeroize::Zeroize;
 
 use crate::constants::SHAKE256_STATE_WORDS;
 
-/// Sponge state for the SHAKE-256 extendable-output function, used as Falcon's PRNG.
+/// ABI-compatible mirror of `shake256_context` from `falcon.h`, used as the PRNG
+/// that drives key generation.
 ///
-/// Mirrors `shake256_context` from `falcon.h` and must remain ABI-compatible with it
-/// (`#[repr(C)]`). The lifecycle is: seed → absorb (`shake256_init_prng_from_seed`) →
-/// squeeze (`shake256_extract`). Each instance is seeded independently and must not be
-/// shared across concurrent callers. The vendor C library zeroes this state on init
-/// but has no cleanup function; the `Drop` impl here handles zeroing on the Rust side.
+/// The vendor treats the contents as opaque (`uint64_t opaque_contents[26]`); the
+/// split into `st` and `dptr` here matches that layout solely for zeroization.
+/// Seeded once via `shake256_init_prng_from_seed`; must not be shared across callers.
+/// Zeroed on drop — the C library provides no cleanup function.
 #[derive(Debug, Default)]
 #[repr(C)]
 pub struct Shake256Context {
-    /// The 1600-bit (200-byte) Keccak-f[1600] permutation state, stored as 25 × u64 words/lanes.
-    /// Each call to `shake256_init_prng_from_seed` loads a unique seed here,
-    /// producing an independent PRNG stream. Never share this across contexts.
+    /// Keccak-f[1600] permutation state: `25 · 8(u64) = 200 (1600 bits)`.
     pub st: [u64; SHAKE256_STATE_WORDS],
-    /// Byte offset into the current squeezed block (the "output pointer").
-    /// - `0`   → not yet initialized / absorb phase
-    /// - `136` → a fresh rate block is ready; the next squeeze will read from byte 0
-    /// - `1–135` → mid-extraction; bytes up to this offset have already been consumed
-    ///
-    /// SHAKE-256 has a rate of 136 bytes (= 1600 − 2×256 bits security margin).
-    /// When `dptr` reaches 136, the Keccak permutation is applied again to refill.
+    /// Output byte offset within the current rate block. This is the 26th word
+    /// of the vendor's opaque struct — Keccak needs 25 lanes; this is the extra.
     pub dptr: u64,
+}
+
+impl Zeroize for Shake256Context {
+    fn zeroize(&mut self) {
+        self.st.zeroize();
+        self.dptr.zeroize();
+    }
 }
 
 impl Drop for Shake256Context {
     fn drop(&mut self) {
-        self.st.zeroize();
-        self.dptr.zeroize();
+        self.zeroize();
     }
 }
 
