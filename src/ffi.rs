@@ -4,7 +4,7 @@ use core::ffi::{c_int, c_void};
 
 use zeroize::Zeroize;
 
-use crate::constants::SHAKE256_STATE_WORDS;
+use crate::constants::SHAKE256_STATE_LANES;
 
 /// ABI-compatible mirror of `shake256_context` from `falcon.h`, used as the PRNG
 /// that drives key generation.
@@ -17,7 +17,7 @@ use crate::constants::SHAKE256_STATE_WORDS;
 #[repr(C)]
 pub struct Shake256Context {
     /// Keccak-f[1600] permutation state: `25 · 8(u64) = 200 (1600 bits)`.
-    pub st: [u64; SHAKE256_STATE_WORDS],
+    pub st: [u64; SHAKE256_STATE_LANES],
     /// Output byte offset within the current rate block. This is the 26th word
     /// of the vendor's opaque struct — Keccak needs 25 lanes; this is the extra.
     pub dptr: u64,
@@ -130,6 +130,9 @@ mod tests {
     use super::*;
     use crate::constants::*;
 
+    const SHAKE256_RATE: u64 = 136;        // dptr value after init; SHAKE-256 rate in bytes
+    const SHAKE256_CONTEXT_SIZE: usize = 208; // 25 · 8 (st) + 8 (dptr)
+
     const TEST_SEED: &[u8] = b"test1234";
     const ALT_SEED: &[u8] = b"different";
     const TEST_MSG: &[u8] = b"hello";
@@ -193,7 +196,7 @@ mod tests {
     #[test]
     fn shake256_context_init_from_seed() {
         let mut sc = Shake256Context::default();
-        assert_eq!(sc.st, [0u64; SHAKE256_STATE_WORDS]);
+        assert_eq!(sc.st, [0u64; SHAKE256_STATE_LANES]);
         assert_eq!(sc.dptr, 0);
 
         unsafe {
@@ -209,7 +212,7 @@ mod tests {
             core::mem::size_of::<Shake256Context>(),
             SHAKE256_CONTEXT_SIZE
         ); // 200 (st) + 8 (dptr)
-        assert_ne!(sc.st, [0u64; SHAKE256_STATE_WORDS]); // seed absorbed into Keccak state
+        assert_ne!(sc.st, [0u64; SHAKE256_STATE_LANES]); // seed absorbed into Keccak state
 
         // different seed -> different state, same dptr
         let mut sc2 = Shake256Context::default();

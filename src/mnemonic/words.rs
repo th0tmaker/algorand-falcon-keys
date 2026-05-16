@@ -3,6 +3,7 @@
 // BIP-39 English word list (2048 words).
 // Source: https://github.com/bitcoin/bips/blob/master/bip-0039/english.txt
 
+#[allow(clippy::large_const_arrays)]
 pub(super) const WORDS: [&str; 2048] = [
     "abandon",
     "ability",

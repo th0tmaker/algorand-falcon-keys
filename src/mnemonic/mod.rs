@@ -135,7 +135,7 @@ pub fn mnemonic_to_entropy(mnemonic: &[&str; MNEMONIC_LEN]) -> Result<[u8; ENTRO
     let checksum = acc as u8;
 
     // Recompute the expected checksum from the recovered entropy and compare.
-    if checksum != Sha256::digest(&entropy)[0] >> (8 - CHECKSUM_BITS) {
+    if checksum != Sha256::digest(entropy)[0] >> (8 - CHECKSUM_BITS) {
         return Err(MnemonicError::ChecksumMismatch.into());
     }
 
