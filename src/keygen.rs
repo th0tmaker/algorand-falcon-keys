@@ -116,9 +116,9 @@ impl Drop for PrivateKey {
 impl PrivateKey {
     /// Constructs a [`PrivateKey`] from raw bytes, skipping validation.
     ///
-    /// The [`Zeroizing`] wrapper ensures the caller's buffer is erased on return.
     /// Invalid bytes are not rejected here — errors surface when `sign` is called.
-    pub fn from_bytes(bytes: Zeroizing<[u8; FALCON_DET1024_PRIVKEY_SIZE]>) -> Self {
+    /// The caller is responsible for zeroizing their copy of `bytes` when done.
+    pub fn from_bytes(bytes: &[u8; FALCON_DET1024_PRIVKEY_SIZE]) -> Self {
         Self(*bytes)
     }
 
@@ -305,7 +305,7 @@ mod tests {
     fn private_key_from_bytes_roundtrip() {
         let (privkey, _) = derive_keypair(TEST_SEED).unwrap();
         let bytes = *privkey.as_bytes();
-        let restored = PrivateKey::from_bytes(Zeroizing::new(bytes));
+        let restored = PrivateKey::from_bytes(&bytes);
 
         assert_eq!(restored.as_bytes(), &bytes);
     }
@@ -449,8 +449,7 @@ mod tests {
     fn private_key_from_bytes_garbage_fails_at_sign_time() {
         // Using `from_bytes` will accept any bytes without validation, hence invalid
         // key material must surface as an error at sign time, not at construction.
-        let garbage = Zeroizing::new([0xFFu8; FALCON_DET1024_PRIVKEY_SIZE]);
-        let privkey = PrivateKey::from_bytes(garbage);
+        let privkey = PrivateKey::from_bytes(&[0xFFu8; FALCON_DET1024_PRIVKEY_SIZE]);
 
         assert!(privkey.sign(TEST_MSG).is_err());
     }

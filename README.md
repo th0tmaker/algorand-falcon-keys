@@ -1,6 +1,6 @@
 # algorand-falcon-keys
 
-Rust bindings for deterministic Falcon-1024 post-quantum key generation, signing, and verification. As of this moment in time, this **`Falcon-det1024`** variant is the only post-quantum signing scheme supported by the Algorand blockchain.
+Rust bindings for deterministic Falcon-1024 post-quantum key generation, signing, and verification. **`Falcon-det1024`** is the only post-quantum signing scheme supported by the Algorand blockchain.
 
 ## Disclaimer
 
@@ -32,8 +32,6 @@ The crate currently covers:
 - **Verification** — supports both compressed and constant-time (`CtSignature`) formats
 - **Mnemonic derivation** — BIP-39 encode/decode and a Falcon-specific seed derivation chain (optional, see [mnemonic feature](#optional-mnemonic-feature))
 
-Raw polynomial coefficients (`f`, `g`, `F`, `G`) are intentionally not exposed at this time. Accessing them is not required for the core keygen, signing, and verification workflow, and exposing them would significantly widen the API surface — adding complexity and maintenance burden before the fundamentals are stable.
-
 ## Core API
 
 ### Keypair derivation
@@ -47,9 +45,7 @@ let seed: &[u8] = /* ... */;
 let (privkey, pubkey) = derive_keypair(seed)?;
 ```
 
-The seed is absorbed into a SHAKE-256 PRNG which drives key generation. The same seed always produces the same keypair.
-
-> **Algorand note:** Algorand uses 48 bytes of entropy as its standard seed size for Falcon key generation. If you are integrating this crate with Algorand, ensure your seed is exactly 48 bytes to match that convention and maintain adequate security margins.
+The same seed always produces the same keypair.
 
 ### Signing
 
@@ -73,19 +69,22 @@ pubkey.verify_ct(&ct_sig, message)?;
 ### Deserializing keys and signatures
 
 ```rust
+use algorand_falcon_keys::{CompressedSignature, CtSignature, PrivateKey, PublicKey};
+
 // PublicKey::from_bytes validates by decoding NTT coefficients.
 let pubkey = PublicKey::from_bytes(&pubkey_bytes)?;
 
-// PrivateKey::from_bytes does NOT validate — errors surface at sign time.
-// The caller's buffer is consumed and zeroized after the copy.
-let privkey = PrivateKey::from_bytes(privkey_bytes);
+// PrivateKey::from_bytes does not validate — errors surface at sign time.
+// Zeroize your copy of the bytes when done.
+let privkey = PrivateKey::from_bytes(&privkey_bytes);
 
 // Signatures validate their header byte and salt version on construction.
 let sig = CompressedSignature::from_bytes(&sig_bytes)?;
 let ct  = CtSignature::from_bytes(&ct_bytes)?;
 ```
 
-> **Caution:** `PrivateKey::from_bytes` skips structural validation by design. If you serialize a private key, store it, and reload it later, any corruption in the bytes will not be caught at deserialization — it will only surface as `Err(Error::Falcon(...))` when `sign` is called. Validate storage and transport integrity independently if this matters for your use case.
+> [!NOTE]
+> `PrivateKey::from_bytes` defers validation by design — invalid bytes are only caught at sign time, not on construction. If you deserialize stored keys, validate storage integrity independently.
 
 ### Error handling
 
@@ -181,8 +180,8 @@ The intermediate 64-byte BIP-39 seed is zeroized before the function returns.
 ## Memory and security properties
 
 - `PrivateKey` does not implement `Clone`. Its bytes are zeroized on drop.
-- `PrivateKey` implements the [`Zeroize`](https://docs.rs/zeroize) trait, re-exported as `algorand_falcon_keys::Zeroize`. This allows wrapping it in `Zeroizing<PrivateKey>` for panic-safe early erasure, or composing it into a larger `#[derive(Zeroize)]` struct.
-- `PrivateKey::from_bytes` consumes the caller's array and zeroizes it after copying the key material in.
+- `PrivateKey` implements the [`Zeroize`](https://docs.rs/zeroize) trait. Both `Zeroize` and `Zeroizing` are re-exported from the crate root, so downstream users do not need a direct `zeroize` dependency. This allows wrapping `PrivateKey` in `Zeroizing<PrivateKey>` for panic-safe early erasure, or composing it into a larger `#[derive(Zeroize)]` struct.
+- `PrivateKey::from_bytes` takes a `&[u8; N]` reference. The caller is responsible for zeroizing their copy — `Zeroize` and `Zeroizing` are re-exported from the crate root for convenience.
 - `derive_keypair` uses `Zeroizing<[u8; N]>` for its stack key buffer, so the buffer is erased on both the success and panic paths — not just on explicit returns.
 - `derive_keypair_from_mnemonic` wraps the intermediate 48-byte Falcon seed in `Zeroizing`, ensuring it is erased even if the downstream `derive_keypair` call panics.
 - `seed_from_mnemonic` zeroizes all sensitive heap-allocated intermediates (the NFKD-normalised mnemonic sentence, the passphrase salt string, and the 64-byte BIP-39 seed) before returning.
