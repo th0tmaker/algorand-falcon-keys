@@ -17,9 +17,8 @@ use zeroize::{Zeroize, Zeroizing};
 
 /// A Falcon-det1024 public key.
 ///
-/// Wraps the `FALCON_DET1024_PUBKEY_SIZE`-byte encoding produced by keygen.
-/// `from_bytes` validates the encoding by decoding the NTT coefficients;
-/// the raw bytes are then stored for use in verification calls.
+/// Wraps the [`FALCON_DET1024_PUBKEY_SIZE`]-byte encoding produced by key generation.
+/// [`PublicKey::from_bytes`] validates the encoding against its NTT coefficients.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublicKey([u8; FALCON_DET1024_PUBKEY_SIZE]);
 
@@ -52,7 +51,7 @@ impl PublicKey {
         self.0
     }
 
-    /// Verifies a [`CompressedSignature`] over a `message` against [`PublicKey`].
+    /// Verifies a [`CompressedSignature`] over `message` against this key.
     pub fn verify_compressed(
         &self,
         signature: &CompressedSignature,
@@ -77,7 +76,7 @@ impl PublicKey {
         }
     }
 
-    /// Verifies a [`CtSignature`] over a `message` against [`PublicKey`].
+    /// Verifies a [`CtSignature`] over `message` against this key.
     pub fn verify_ct(&self, signature: &CtSignature, message: &[u8]) -> Result<(), Error> {
         let ret = unsafe {
             falcon_det1024_verify_ct(

@@ -15,10 +15,8 @@ use crate::{
 
 /// A Falcon-det1024 signature in compressed (Huffman-coded) format.
 ///
-/// **WARNING**: This type enforces structural integrity only: the header byte, salt version,
-/// and length are validated on construction. A well-formed [`CompressedSignature`] may still 
-/// fail verification as this type does not guarantee cryptographic validity — that must be 
-/// established separately by calling `verify_compressed` with the corresponding public key and message.
+/// Structural integrity (header byte, salt version, length) is validated on construction.
+/// Cryptographic validity requires a separate call to [`PublicKey::verify_compressed`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompressedSignature(Box<[u8]>);
 
@@ -81,12 +79,9 @@ impl CompressedSignature {
 
 /// A Falcon-det1024 signature in constant-time (CT) format.
 ///
-/// CT format is always exactly [`FALCON_DET1024_SIG_CT_SIZE`] bytes.
-///
-/// **WARNING**: This type enforces structural integrity only: the header byte, salt version,
-/// and length are validated on construction. A well-formed [`CtSignature`] may still fail 
-/// verification as this type does not guarantee cryptographic validity — that must be 
-/// established separately by calling `verify_compressed` with the corresponding public key and message.
+/// Always exactly [`FALCON_DET1024_SIG_CT_SIZE`] bytes. Structural integrity (header byte,
+/// salt version) is validated on construction. Cryptographic validity requires a separate
+/// call to [`PublicKey::verify_ct`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CtSignature([u8; FALCON_DET1024_SIG_CT_SIZE]);
 
