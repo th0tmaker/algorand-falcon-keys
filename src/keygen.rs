@@ -98,9 +98,8 @@ impl PublicKey {
 
 /// A Falcon-det1024 private key.
 ///
-/// Wraps the `FALCON_DET1024_PRIVKEY_SIZE` byte encoding produced by keygen.
-/// The inner bytes are secret and zeroed on drop — do not clone or persist
-/// without deliberate intent. Obtain via `derive_keypair` or `from_bytes`.
+/// Wraps the [`FALCON_DET1024_PRIVKEY_SIZE`]-byte encoding produced by key generation.
+/// Secret bytes are zeroed on drop. Obtain via [`derive_keypair`] or [`PrivateKey::from_bytes`].
 pub struct PrivateKey([u8; FALCON_DET1024_PRIVKEY_SIZE]);
 
 impl Zeroize for PrivateKey {
@@ -116,17 +115,12 @@ impl Drop for PrivateKey {
 }
 
 impl PrivateKey {
-    /// Wraps raw key material into a [`PrivateKey`] **without** validation, consuming the buffer.
+    /// Constructs a [`PrivateKey`] from raw bytes, skipping validation.
     ///
-    /// The caller's array is moved in and zeroed after the key material is copied
-    /// into [`PrivateKey`]. Invalid bytes are not rejected here — they will surface as
-    /// `Err(Error::Falcon(...))` when `sign` is called and the vendor C library
-    /// decodes the key into its internal polynomial representation (f, g, F, G
-    /// coefficients) at sign time.
-    pub fn from_bytes(mut bytes: [u8; FALCON_DET1024_PRIVKEY_SIZE]) -> Self {
-        let key = Self(bytes);
-        bytes.zeroize();
-        key
+    /// The [`Zeroizing`] wrapper ensures the caller's buffer is erased on return.
+    /// Invalid bytes are not rejected here — errors surface when `sign` is called.
+    pub fn from_bytes(bytes: Zeroizing<[u8; FALCON_DET1024_PRIVKEY_SIZE]>) -> Self {
+        Self(*bytes)
     }
 
     /// Borrows the [`FALCON_DET1024_PRIVKEY_SIZE`]-byte encoding without copying.
@@ -134,8 +128,7 @@ impl PrivateKey {
         &self.0
     }
 
-    /// Returns an instance of [`CompressedSignature`] that was produced
-    /// by signing a `message` with [`PrivateKey`].
+    /// Signs `message` and returns a [`CompressedSignature`].
     pub fn sign(&self, message: &[u8]) -> Result<CompressedSignature, Error> {
         let mut sig = [0u8; FALCON_DET1024_SIG_COMPRESSED_MAXSIZE];
         let mut sig_len = 0usize;
@@ -158,14 +151,12 @@ impl PrivateKey {
     }
 }
 
-/// Derives a Falcon-det1024 keypair from a seed.
+/// Generates a deterministic Falcon-det1024 keypair from `seed`.
 ///
-/// The seed is absorbed into a SHAKE-256 PRNG which drives key generation.
-/// Any byte sequence is a valid seed — callers are responsible for providing
-/// a seed with sufficient entropy.
+/// The same seed always produces the same keypair. Any byte sequence is valid —
+/// callers are responsible for sufficient entropy. Algorand uses 48-byte seeds.
 ///
-/// Returns a tuple containing an instance of [`PrivateKey`] and [`PublicKey`]
-/// or `Err(Error::Falcon(...))` if the vendor C library key generation fails. 
+/// Returns `Err` if the C library fails during key generation.
 pub fn derive_keypair(seed: &[u8]) -> Result<(PrivateKey, PublicKey), Error> {
     let mut rng = Shake256Context::default();
 
@@ -191,18 +182,13 @@ pub fn derive_keypair(seed: &[u8]) -> Result<(PrivateKey, PublicKey), Error> {
     Ok((PrivateKey(*privkey), PublicKey(pubkey)))
 }
 
-/// Derives a Falcon-det1024 keypair from a BIP-39 mnemonic and optional passphrase.
+/// Generates a deterministic Falcon-det1024 keypair from a BIP-39 mnemonic and passphrase.
 ///
-/// Convenience wrapper that chains [`crate::mnemonic::seed_from_mnemonic`]
-/// and [`derive_keypair`]: The mnemonic phrase is validated, a 48-byte
-/// Falcon seed is derived, and the seed is passed to [`derive_keypair`]
-/// in order to return a tuple holding [`PrivateKey`] and [`PublicKey`].
+/// Validates the mnemonic, derives a 48-byte Falcon seed via [`crate::mnemonic::seed_from_mnemonic`],
+/// then passes it to [`derive_keypair`]. Only keypairs originally generated from a 48-byte
+/// seed are recoverable via this path.
 ///
-/// The derived seed is always 48 bytes (Algorand's Falcon convention) — only keypairs
-/// originally generated from a 48-byte seed are recoverable via this path.
-///
-/// Pass an empty string for `passphrase` if no passphrase was used to
-/// derive the 48-byte Falcon seed.
+/// Pass an empty string for `passphrase` if none was used.
 #[cfg(feature = "mnemonic")]
 pub fn derive_keypair_from_mnemonic(
     mnemonic: &[&str; crate::mnemonic::MNEMONIC_LEN],
@@ -320,7 +306,7 @@ mod tests {
     fn private_key_from_bytes_roundtrip() {
         let (privkey, _) = derive_keypair(TEST_SEED).unwrap();
         let bytes = *privkey.as_bytes();
-        let restored = PrivateKey::from_bytes(bytes);
+        let restored = PrivateKey::from_bytes(Zeroizing::new(bytes));
 
         assert_eq!(restored.as_bytes(), &bytes);
     }
@@ -464,7 +450,7 @@ mod tests {
     fn private_key_from_bytes_garbage_fails_at_sign_time() {
         // Using `from_bytes` will accept any bytes without validation, hence invalid
         // key material must surface as an error at sign time, not at construction.
-        let garbage = [0xFFu8; FALCON_DET1024_PRIVKEY_SIZE];
+        let garbage = Zeroizing::new([0xFFu8; FALCON_DET1024_PRIVKEY_SIZE]);
         let privkey = PrivateKey::from_bytes(garbage);
 
         assert!(privkey.sign(TEST_MSG).is_err());

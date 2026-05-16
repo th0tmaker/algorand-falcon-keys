@@ -26,7 +26,7 @@ pub use {
     error::{Error, SignatureError},
     keygen::{derive_keypair, PrivateKey, PublicKey},
     signature::{CompressedSignature, CtSignature},
-    zeroize::Zeroize,
+    zeroize::{Zeroize, Zeroizing},
 };
 
 #[cfg(feature = "mnemonic")]
