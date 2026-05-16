@@ -7,7 +7,10 @@ use pbkdf2::pbkdf2_hmac;
 use sha2::{Digest, Sha256, Sha512};
 use unicode_normalization::UnicodeNormalization;
 
-use crate::{error::{Error, MnemonicError}, zeroize::Zeroize};
+use alloc::string::String;
+use zeroize::{Zeroize, Zeroizing};
+
+use crate::error::{Error, MnemonicError};
 
 pub const ENTROPY_LEN: usize = 32;
 pub const CHECKSUM_BITS: usize = 8; // entropy_bits / 32
@@ -171,35 +174,36 @@ pub fn seed_from_mnemonic(
     mnemonic_to_entropy(mnemonic)?;
 
     // NFKD-normalize the mnemonic sentence and passphrase as required by BIP-39
-    let sentence: String = mnemonic.join(" ").nfkd().collect();
-    let salt = format!("mnemonic{}", passphrase.nfkd().collect::<String>());
+    let mut sentence: String = mnemonic.join(" ").nfkd().collect();
+    let mut salt = alloc::format!("mnemonic{}", passphrase.nfkd().collect::<String>());
 
     // PBKDF2-HMAC-SHA512: canonical BIP-39 seed derivation
-    let mut bip39_seed = [0u8; BIP39_SEED_SIZE];
+    let mut bip39_seed = Zeroizing::new([0u8; BIP39_SEED_SIZE]);
     pbkdf2_hmac::<Sha512>(
         sentence.as_bytes(),
         salt.as_bytes(),
         PBKDF2_ITERATIONS,
-        &mut bip39_seed,
+        bip39_seed.as_mut_slice(),
     );
 
     // HKDF-SHA512: collapse the 64-byte BIP-39 seed to the 48-byte Falcon seed.
     // Domain-separated with a Falcon-specific salt and info string so the output
     // is independent from any other BIP-39 key derivation use of the same seed
-    let hkdf = Hkdf::<Sha512>::new(Some(HKDF_SALT.as_bytes()), &bip39_seed);
+    let hkdf = Hkdf::<Sha512>::new(Some(HKDF_SALT.as_bytes()), bip39_seed.as_slice());
     let mut out = [0u8; FALCON_SEED_SIZE];
-    hkdf.expand(HKDF_INFO.as_bytes(), &mut out)
-        .map_err(|_| MnemonicError::SeedDerivation)?;
+    let expand_result = hkdf.expand(HKDF_INFO.as_bytes(), &mut out);
 
-    // Zeroize the intermediate BIP-39 seed — it must not outlive this stack frame
-    bip39_seed.zeroize();
+    // Zeroize heap-allocated intermediates before any early return
+    sentence.zeroize();
+    salt.zeroize();
 
-    // Return the output 48-byte Falcon seed
+    expand_result.map_err(|_| MnemonicError::SeedDerivation)?;
     Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
     use super::*;
     use crate::error::MnemonicError;
 

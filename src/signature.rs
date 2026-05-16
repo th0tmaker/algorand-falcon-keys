@@ -1,5 +1,6 @@
 // src/signature.rs
 
+use alloc::boxed::Box;
 use core::ffi::c_void;
 
 use crate::{
@@ -125,6 +126,8 @@ impl CtSignature {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+    use alloc::vec::Vec;
     use super::*;
     use crate::{
         constants::{

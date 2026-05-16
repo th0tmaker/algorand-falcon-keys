@@ -12,8 +12,8 @@ use crate::{
         falcon_det1024_verify_ct, shake256_init_prng_from_seed
     },
     signature::{CompressedSignature, CtSignature},
-    zeroize::Zeroize,
 };
+use zeroize::{Zeroize, Zeroizing};
 
 /// A Falcon-det1024 public key.
 ///
@@ -103,6 +103,12 @@ impl PublicKey {
 /// without deliberate intent. Obtain via `derive_keypair` or `from_bytes`.
 pub struct PrivateKey([u8; FALCON_DET1024_PRIVKEY_SIZE]);
 
+impl Zeroize for PrivateKey {
+    fn zeroize(&mut self) {
+        self.0.zeroize();
+    }
+}
+
 impl Drop for PrivateKey {
     fn drop(&mut self) {
         self.0.zeroize();
@@ -167,9 +173,9 @@ pub fn derive_keypair(seed: &[u8]) -> Result<(PrivateKey, PublicKey), Error> {
         shake256_init_prng_from_seed(&mut rng, seed.as_ptr() as *const c_void, seed.len())
     };
 
-    let mut privkey = [0u8; FALCON_DET1024_PRIVKEY_SIZE];
+    let mut privkey = Zeroizing::new([0u8; FALCON_DET1024_PRIVKEY_SIZE]);
     let mut pubkey = [0u8; FALCON_DET1024_PUBKEY_SIZE];
-    
+
     let ret = unsafe {
         falcon_det1024_keygen(
             &mut rng,
@@ -179,17 +185,10 @@ pub fn derive_keypair(seed: &[u8]) -> Result<(PrivateKey, PublicKey), Error> {
     };
 
     if ret != 0 {
-        // Zero the stack buffer before returning — keygen failed but privkey may
-        // hold partial key material written by the C library before the error.
-        privkey.zeroize();
         return Err(Error::Falcon(ret));
     }
 
-    // PrivateKey(privkey) copies the bytes (Copy type), so the stack buffer still
-    // holds key material after the constructor call. Zero it explicitly.
-    let result = Ok((PrivateKey(privkey), PublicKey(pubkey)));
-    privkey.zeroize();
-    result
+    Ok((PrivateKey(*privkey), PublicKey(pubkey)))
 }
 
 /// Derives a Falcon-det1024 keypair from a BIP-39 mnemonic and optional passphrase.
@@ -206,10 +205,8 @@ pub fn derive_keypair_from_mnemonic(
     mnemonic: &[&str; crate::mnemonic::MNEMONIC_LEN],
     passphrase: &str,
 ) -> Result<(PrivateKey, PublicKey), Error> {
-    let mut seed = crate::mnemonic::seed_from_mnemonic(mnemonic, passphrase)?;
-    let result = derive_keypair(&seed);
-    seed.zeroize();
-    result
+    let seed = Zeroizing::new(crate::mnemonic::seed_from_mnemonic(mnemonic, passphrase)?);
+    derive_keypair(&*seed)
 }
 
 #[cfg(test)]

@@ -1,12 +1,15 @@
 // src/lib.rs
 
+#![no_std]
+
+extern crate alloc;
+
 mod constants;
+mod error;
 mod ffi;
 mod keygen;
 mod signature;
-mod zeroize;
 
-pub mod error;
 #[cfg(feature = "mnemonic")]
 pub mod mnemonic;
 
@@ -23,8 +26,11 @@ pub use {
     error::{Error, SignatureError},
     keygen::{derive_keypair, PrivateKey, PublicKey},
     signature::{CompressedSignature, CtSignature},
+    zeroize::Zeroize,
 };
 
+#[cfg(feature = "mnemonic")]
+pub use error::MnemonicError;
 #[cfg(feature = "mnemonic")]
 pub use keygen::derive_keypair_from_mnemonic;
 #[cfg(feature = "mnemonic")]

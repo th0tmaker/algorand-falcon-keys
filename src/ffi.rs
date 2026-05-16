@@ -2,7 +2,9 @@
 
 use core::ffi::{c_int, c_void};
 
-use crate::{constants::SHAKE256_STATE_WORDS, zeroize::Zeroize};
+use zeroize::Zeroize;
+
+use crate::constants::SHAKE256_STATE_WORDS;
 
 /// Sponge state for the SHAKE-256 extendable-output function, used as Falcon's PRNG.
 ///
