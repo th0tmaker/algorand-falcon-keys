@@ -4,7 +4,8 @@ Rust bindings for deterministic Falcon-1024 post-quantum key generation, signing
 
 ## Disclaimer
 
-**WARNING: This crate is exploratory and has not been audited.** It is not the work of a credentialed cryptographer. Anyone using it should understand the potential risks and liabilities involved, and use it at their own discretion. The API and internal derivation parameters are subject to potentially breaking changes.
+> [!CAUTION]
+> **This crate is exploratory and has not been audited.** It is not the work of a credentialed cryptographer. Anyone using it should understand the potential risks and liabilities involved, and use it at their own discretion. The API and internal derivation parameters are subject to potentially breaking changes.
 
 ## Installation
 
