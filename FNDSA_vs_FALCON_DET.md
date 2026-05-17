@@ -91,7 +91,16 @@ parameter set. Whether that margin is acceptable is a security-policy judgement,
 - **Formal security proof** — FN-DSA is proven secure in the random oracle model (Fouque et al.,
   EUROCRYPT 2026). The proof establishes that breaking FN-DSA is *equivalent* to solving
   t-R-ISIS — necessary and sufficient. Any improvement in lattice cryptanalysis directly translates
-  to an attack on FN-DSA, and vice versa. Falcon-DET1024 has no formal security proof.
+  to an attack on FN-DSA, and vice versa. FALCON-DET1024 has no formal security proof.
+
+  It is important to note that this gap was a **known and deliberate tradeoff**, not an oversight.
+  Chris Peikert — co-author of the original GPV framework itself (the "P" in GPV) — co-authored
+  `falcon-det.pdf`. He understood better than almost anyone what a GPV proof requires and where
+  the deterministic variant deviates from it. The spec is honest about the informal security
+  reasoning and scopes the scheme to a specific use case (SNARK-friendly compact certificates).
+  What changed is that the EUROCRYPT 2026 paper later formalised the GPV proof gap more precisely
+  and provided a proof for the randomised variant — a proof that did not exist when the
+  deterministic spec was written in 2021.
 
   A critical contribution of the paper is Rényi order optimisation. Falcon's own specification
   recommends a Rényi divergence order of a=2^λ — applying this naively to Falcon-1024 would
@@ -216,6 +225,26 @@ parameter set. Whether that margin is acceptable is a security-policy judgement,
   incorrectly assumes byte-identical signatures would not break. The ABFT spec does not guarantee
   this, but such assumptions may exist in external tooling built against Algorand.
 
+- **Use cases where signing determinism is genuinely required** — There are cryptographic
+  constructions where deterministic signing is not a preference but a hard requirement, and FN-DSA
+  cannot substitute:
+
+  - *Identity-Based Encryption (IBE)*: In a Falcon-based IBE scheme, key extraction (deriving a
+    user's secret key from their identity) is mathematically equivalent to signing. The extracted
+    key must be identical every time for the same identity — if you request your key twice, you
+    must receive the same bytes, or the scheme breaks. FN-DSA's random nonce would produce a
+    different "key" on each extraction, making Falcon-based IBE impossible. The "Do Not Disturb"
+    paper explicitly mentions this use case (the Latte HIBE construction, under consideration for
+    UK NCSC and ETSI standardisation).
+
+  - *Sublinear SNARK aggregation*: The SNARK aggregation scheme for Falcon by Aardal et al.
+    achieves asymptotically sublinear aggregated signature size specifically because of
+    determinism. With FN-DSA, all salts must be included in the aggregated proof, forcing linear
+    scaling. Determinism eliminates the salt overhead and enables sublinear aggregation.
+
+  For Algorand's state proofs and transaction signing, neither of these hard requirements applies —
+  but they do establish that the deterministic variant has legitimate use cases beyond convention.
+
 - **SNARK friendliness for compact certificates — the primary stated motivation** — The
   `falcon-det.pdf` spec is explicit that this is the core reason for choosing derandomization over
   randomized hashing. With a random salt, the digest syndrome depends on the salt in the signature.
@@ -277,6 +306,21 @@ The implementation is mature. But "tried and trusted" in the context of post-qua
 means resistance to a quantum adversary — which no scheme has demonstrated because no sufficiently
 capable quantum computer exists yet. The claim is about implementation correctness, not about
 delivering the fundamental promise of the scheme.
+
+### "FN-DSA's non-determinism is a computation problem, not just an output difference"
+
+This conflates two distinct notions. FN-DSA is fully computation-deterministic given a specific
+nonce — the algorithm runs correctly and consistently. The non-determinism is in *choosing* the
+nonce, not in the computation itself. Two FN-DSA signatures on the same message produce different
+bytes because different nonces were drawn; that is expected correct behaviour, not a computation
+failure.
+
+The FPEMU concern in FALCON-DET1024 is the opposite: a function that *should* be reproducible
+(same nonce, same message, same key) produces *different* outputs due to floating-point
+discrepancies. That unintended inconsistency is what "Do Not Disturb" exploits — the structured
+difference between two runs that should have been identical. FN-DSA has no such exposure because
+different outputs from different nonces are by design: there is no "expected identical output"
+against which a discrepancy can be measured and exploited.
 
 ### "Cross-machine floating-point determinism requires FPEMU"
 
@@ -415,30 +459,128 @@ to the deterministic variant:
 > has a small but significant chance of outputting two different lattice points with a very
 > structured difference that immediately reveals the secret key."*
 
-**Key details:**
-- Requires approximately 300,000 signatures from two implementations with different FP computation
-  orderings
-- Key recovery probability: 70–76%
-- Explicitly targets **derandomized/deterministic variants** as the most vulnerable setting
-- Works even when both implementations use integer-based emulated floating-point (FPEMU) — the
-  attack exploits different computation orderings within the emulation, not hardware FP differences
+**The attack trigger:**
 
-**Why this is more dangerous for the deterministic variant than for FN-DSA:**
+The sampler must be called **twice on the same input** with different floating-point errors. The
+vulnerability arises from a discontinuity in Falcon's `SamplerZ` around near-integer center
+values: a tiny FP error ε can flip `floor(c)`, and by Lemma 1 of the paper, when `floor(c)`
+flips, the sampler executions are **guaranteed** to be inconsistent.
 
-For standard Falcon or FN-DSA, different machines producing different valid signatures for the
-same (key, message) pair is expected and harmless — different random nonces produce different but
-equally valid outputs. There is no "structured difference" to exploit.
+Near-integer centers occur with non-negligible probability at exactly four positions during
+`ffSampling`: the first two and last two calls to `SamplerZ`. The probability at each is between
+1/10,000 and 1/20,000 — mathematically derived from the NTRU key structure (1/q ≈ 1/12,289 for
+the first two, 1/‖(g,−f)‖² for the last two). All other positions have denominator ≳ q²,
+making integer centers negligibly rare and practically undetectable in double precision.
 
-For the deterministic variant, the same (key, message) pair is supposed to produce identical
-output. If two implementations produce different outputs, the difference is *not* due to different
-nonces — it is due to FP discrepancies in a function that should be deterministic. That structured
-difference is what the attack exploits to recover the private key.
+A discrepancy at the **last two** calls introduces a structured difference in just two components
+of the output — specifically, `∆z0 = a + b·x^{n/2}` where a and b each range over at most 38
+values ({-18,...,19}). Key recovery requires exhaustive search over at most 38² = 1,444 pairs —
+less than 2^11 operations, essentially instant. A discrepancy at the **first two** calls produces
+a short NTRU lattice vector — not currently believed to enable key recovery. The dangerous
+condition (integer center at last two calls) fires at roughly 1 in 10,000–40,000 signing pairs,
+as confirmed experimentally; key recovery follows from a single such pair via an exhaustive search
+of 38² = 1,444 candidates.
+
+The paper formally characterises the attack as violating **unbreakability under chosen-message
+attacks** — a complete break of the standard security definition, not merely a practical concern.
+
+**Why FN-DSA is not vulnerable — the precise reason:**
+
+The paper states explicitly: *"For normal Falcon signatures, this should never happen, owing to
+the use of a salt that never repeats."* With a fresh random salt on every signing call, the
+sampler is **never called twice on the same input**, regardless of any FP discrepancies present.
+The randomness makes the attack condition structurally impossible — not merely unlikely.
+
+**Why FALCON-DET1024 is vulnerable — and FPEMU is not sufficient:**
+
+In FALCON-DET1024, the random tape is derived deterministically as `SHAKE(ℓ || sk || msg)`, and
+the fixed salt is `r = 0x00 || ℓ || "FALCON_DET" || 0x00...00` (40 bytes, with only the 1-byte
+version field appearing in the signature). Signing the same message twice with the same key
+therefore produces the identical sampler input every time.
+
+The FALCON-DET1024 codebase acknowledges the FP risk: only `fpemu_det` (integer-emulated FP) is
+the supported variant; `avx2_det`, `avx2_fma_det` and similar are present in the codebase but
+explicitly unsupported and warned against in the README due to floating-point discrepancy risks.
+The "Do Not Disturb" paper then identifies three concrete sources of FP discrepancy that can
+trigger the attack even under the recommended configuration:
+
+1. **IEEE-754 weak determinism** — even the same source code, compiler, and options can produce
+   different results due to extended precision in x87 FPU registers.
+2. **FMA-optimized code vs other variants** — experimentally confirmed to produce exploitable
+   discrepancies at ~once per few thousand signing pairs, enabling full key recovery.
+3. **The `sign_dyn` vs `sign_tree` API variants within the same FPEMU-enabled binary** — these
+   two signing APIs compute the same floating-point operations in a subtly different order at the
+   deepest recursive layer (n=4). Specifically, the `t1` component of the `split_fft` operation
+   is computed as `0.5 × ((1/√2 × a) − (−1/√2 × b))` in `sign_dyn` and as
+   `(1/(2√2)) × (a + b)` in `sign_tree` — mathematically equal, but not in IEEE-754 because FP
+   arithmetic is not distributive. The resulting center discrepancy is passed to `SamplerZ`, where
+   a near-integer input triggers the floor discontinuity. Crucially, **only centers are affected,
+   not standard deviations** — consistent with the paper's proof that σ errors are non-dangerous.
+   This occurs **even in `fpemu_det`**. Experimental results (Table 2 of the paper, 10 million
+   queries per instance): `fpemu_det 1024` produces ~230-280 exploitable discrepant pairs per 10
+   million sign_dyn + sign_tree pairs — approximately **1 in 40,000 pairs**. Over 70% of
+   discrepancies occur at the last two SamplerZ calls, directly enabling key recovery. Table 3
+   of the paper shows: `fpemu_det 1024` with **10,000 query pairs → 50% key recovery probability;
+   100,000 query pairs → 90% key recovery probability**.
+
+The FALCON-DET1024 authors correctly identified the unsupported FP variants as dangerous and
+warned against them. The paper demonstrates that they missed a vulnerability in the configuration
+they considered safe: using both signing APIs with the same key is sufficient to trigger key
+recovery, even with integer FP emulation enabled.
+
+FPEMU is necessary but not sufficient.
+
+**The blockchain passive scan scenario:**
+
+The paper explicitly calls out the blockchain context: *"an adversary can passively scan the
+blockchain, waiting for a discrepancy to appear, and skim off the corresponding private key when
+it happens"* — directly analogous to how Bitcoin nonce-reuse attacks were carried out passively
+on the blockchain. For Algorand, any deployment of FALCON-DET1024 where the same key signs the
+same message twice under different floating-point conditions — across different nodes, API paths,
+or software versions — exposes the private key with no active intervention needed by the attacker.
 
 The spec's own warning ("the same private key should not be used to sign the same message digest
-using functionally inequivalent sampling procedures") anticipated this attack class. The "Do Not
-Disturb" paper demonstrated it concretely in 2025 — four years after the spec was written.
+using functionally inequivalent sampling procedures") anticipated this class. The paper demonstrated
+it concretely in 2025, including the case the spec considered the safe configuration. Mitaka and
+Antrag — other lattice schemes using the same `SamplerZ` — are **not** vulnerable because their
+sampler is never called with near-integer centers; Falcon's key structure is what makes it
+uniquely sensitive.
 
-**FN-DSA is not vulnerable to this attack** by construction.
+**Proposed countermeasure (Section 7.1 of the paper):**
+
+The paper proposes two changes that together eliminate the vulnerability:
+
+1. Replace `SamplerZ` with `NewSamplerZ` — uses `⌊c⌉` (round to nearest integer) instead of
+   `⌊c⌋` (floor). This shifts the instability from integer centers to half-integer centers.
+2. Restrict key generation so that `‖(g,−f)‖²` is odd — this ensures half-integer centers
+   cannot appear at the six vulnerable positions in the Falcon tree traversal.
+
+**The critical issue for existing FALCON-DET1024 keys:**
+
+The Falcon C reference implementation — the basis of FALCON-DET1024 — **always generates keys
+with `‖(g,−f)‖²` even**, due to an implementation shortcut in the extended GCD algorithm. This
+means **existing FALCON-DET1024 keys cannot benefit from this countermeasure**. Applying the fix
+requires both a modified key generation algorithm (to produce odd `‖(g,−f)‖²`) and the new
+signing algorithm (`NewSamplerZ`). All keys generated by the current C implementation are
+disqualified from the countermeasure without re-keying.
+
+**Fixing the dynamic/tree discrepancy is simpler (Section 7.2):**
+
+The dynamic/tree API discrepancy can be eliminated by a targeted change of just a few lines of C
+in `sign_tree`'s bottom recursion layer (n=4), reordering the FP operations to match `sign_dyn`.
+Alternatively, the code base already contains a simpler n=2 or n=1 bottom layer that doesn't
+have the re-ordering issue — skipping to it eliminates the discrepancy with no algorithmic change.
+Testing with 10 million sign_dyn/sign_tree pairs after either fix: zero discrepancies, no
+measurable performance impact. This fix does not address the FMA discrepancy; for full protection,
+FPEMU should also be consistently enforced.
+
+**Acknowledgement — Peikert and Pornin both consulted:**
+
+The paper's acknowledgements state: *"We would like to thank Chris Peikert and Thomas Pornin for
+useful comments and discussions on a previous version of this paper."* Both the co-designer of
+FALCON-DET1024 (Peikert) and Falcon's principal author and `rust-fn-dsa` implementor (Pornin)
+reviewed the paper's findings before publication. Neither contested them. This confirms the
+paper's conclusions are accepted by the original authors of both schemes.
 
 ---
 
@@ -460,12 +602,12 @@ It is further from the proven framework than even standard unmodified Falcon.
 
 | Gap | Explanation |
 |---|---|
-| No formal security proof | GPV proof fails; Falcon+ proof does not cover the deterministic variant; the spec itself claims security only informally |
+| No formal security proof | GPV proof fails; Falcon+ proof does not cover the deterministic variant. This was a known, deliberate tradeoff by Peikert (co-author of GPV itself) — the spec is honest about it. The gap became more pressing once the EUROCRYPT 2026 paper formalised it and proved the randomised variant secure |
 | No public key binding | Multi-user security loss of ~20 bits at Algorand's account scale; completely absent from the spec |
 | Salt absent (not just outside the loop) | Conditional distribution problem unresolvable without randomness |
 | Variable-length signatures | Spec explicitly rejects padded format (1280 bytes) because the retry it requires would violate determinism |
-| FP attack surface | "Do Not Disturb a Sleeping Falcon" (EUROCRYPT 2025) demonstrates 70-76% key recovery from 300,000 signatures across inequivalent implementations — a risk the spec warned about but could not prevent |
-| FPEMU performance cost | Mandatory FPEMU makes signing ~15x slower; the spec acknowledges this tradeoff explicitly |
+| FP attack surface | "Do Not Disturb a Sleeping Falcon" (EUROCRYPT 2025): signing the same message twice with any FP discrepancy has a ~1/1000–1/3000 chance of instantly exposing the private key via a structured difference in sampler outputs — a risk the spec warned about but could not prevent |
+| FPEMU does not fully protect | The "dynamic" vs "tree" API signing variants in the same FPEMU-enabled binary can produce exploitable discrepancies — FPEMU is necessary but not sufficient. A countermeasure exists (NewSamplerZ + odd key constraint) but requires re-keying: the C library always generates keys with `‖(g,−f)‖²` even, disqualifying all existing keys |
 | C-only reference implementation | Libc linkage required; no pure Rust implementation exists for FALCON-DET1024 |
 | Custom non-standard variant | No hardware acceleration, no ecosystem tooling, no multi-language library support |
 | Determinism assumed but not required | ABFT spec never mandated it; inherited from Ed25519 convention |
@@ -506,7 +648,9 @@ implementations is appropriate; shipping in production is premature until the st
   A major revision of an IACR publication in EUROCRYPT 2026.
   Short URL: https://ia.cr/2024/1769
 - Lin, Tibouchi, Yu, Zhang — *Do Not Disturb a Sleeping Falcon: Floating-Point Error Sensitivity
-  of the Falcon Sampler and Its Consequences*, IACR ePrint 2024/1709, EUROCRYPT 2025
+  of the Falcon Sampler and Its Consequences*, IACR ePrint 2024/1709, EUROCRYPT 2025.
+  Acknowledged by both Chris Peikert (FALCON-DET1024 co-designer) and Thomas Pornin (Falcon
+  principal author) prior to publication.
 - Lazar, Peikert — *Deterministic Falcon-1024*, `falcon-det.pdf`, Algorand Inc., November 2021:
   https://github.com/algorand/falcon/blob/main/falcon-det.pdf
 - Pornin — `rust-fn-dsa` (2025): https://github.com/pornin/rust-fn-dsa
