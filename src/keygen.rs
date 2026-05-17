@@ -15,7 +15,7 @@ use crate::{
 };
 use zeroize::{Zeroize, Zeroizing};
 
-/// A Falcon-det1024 public key.
+/// A Falcon-DET1024 public key.
 ///
 /// Wraps the [`FALCON_DET1024_PUBKEY_SIZE`]-byte encoding produced by key generation.
 /// [`PublicKey::from_bytes`] validates the encoding against its NTT coefficients.
@@ -95,7 +95,7 @@ impl PublicKey {
     }
 }
 
-/// A Falcon-det1024 private key.
+/// A Falcon-DET1024 private key.
 ///
 /// Wraps the [`FALCON_DET1024_PRIVKEY_SIZE`]-byte encoding produced by key generation.
 /// Secret bytes are zeroed on drop. Obtain via [`derive_keypair`] or [`PrivateKey::from_bytes`].
@@ -128,6 +128,8 @@ impl PrivateKey {
     }
 
     /// Signs `message` and returns a [`CompressedSignature`].
+    ///
+    /// Signing is deterministic — the same key and message always produce the same signature bytes.
     pub fn sign(&self, message: &[u8]) -> Result<CompressedSignature, Error> {
         let mut sig = [0u8; FALCON_DET1024_SIG_COMPRESSED_MAXSIZE];
         let mut sig_len = 0usize;
@@ -150,7 +152,7 @@ impl PrivateKey {
     }
 }
 
-/// Generates a deterministic Falcon-det1024 keypair from `seed`.
+/// Generates a deterministic Falcon-DET1024 keypair from `seed`.
 ///
 /// The same seed always produces the same keypair. Any byte sequence is valid —
 /// callers are responsible for sufficient entropy. Algorand uses 48-byte seeds.
@@ -181,7 +183,7 @@ pub fn derive_keypair(seed: &[u8]) -> Result<(PrivateKey, PublicKey), Error> {
     Ok((PrivateKey(*privkey), PublicKey(pubkey)))
 }
 
-/// Generates a deterministic Falcon-det1024 keypair from a BIP-39 mnemonic and passphrase.
+/// Generates a deterministic Falcon-DET1024 keypair from a BIP-39 mnemonic and passphrase.
 ///
 /// Validates the mnemonic, derives a 48-byte Falcon seed via [`crate::mnemonic::seed_from_mnemonic`],
 /// then passes it to [`derive_keypair`]. Only keypairs originally generated from a 48-byte

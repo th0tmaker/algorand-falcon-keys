@@ -1,6 +1,6 @@
 # algorand-falcon-keys
 
-Rust bindings for deterministic Falcon-1024 post-quantum key generation, signing, and verification. **`Falcon-det1024`** is the only post-quantum signing scheme supported by the Algorand blockchain.
+Rust bindings for deterministic Falcon-1024 post-quantum key generation, signing, and verification. **`Falcon-DET1024`** is currently the only post-quantum signing scheme supported by the Algorand blockchain.
 
 ## Disclaimer
 
@@ -24,7 +24,7 @@ Replace `<commit-sha>` with the full commit hash you want to target, e.g. `rev =
 
 ## Overview
 
-This crate wraps the [`falcon`](vendor/falcon/) C library — specifically **`Falcon-det1024`**, a variant that replaces the 40-byte random salt in standard Falcon with a 1-byte version field, making every signature fully reproducible from the same private key and message.
+This crate wraps the [`falcon`](vendor/falcon/) C library — specifically **`Falcon-DET1024`**, a variant that replaces the 40-byte random salt in standard Falcon with a 1-byte version field, making every signature fully reproducible from the same private key and message.
 
 The crate currently covers:
 
@@ -187,7 +187,7 @@ The intermediate 64-byte BIP-39 seed is zeroized before the function returns.
 - `derive_keypair_from_mnemonic` wraps the intermediate 48-byte Falcon seed in `Zeroizing`, ensuring it is erased even if the downstream `derive_keypair` call panics.
 - `seed_from_mnemonic` zeroizes all sensitive heap-allocated intermediates (the NFKD-normalised mnemonic sentence, the passphrase salt string, and the 64-byte BIP-39 seed) before returning.
 - Signatures are structurally validated (header byte, salt version, length) on construction, but cryptographic validity requires a separate verification call.
-- The scheme is fully deterministic — the same seed and message always produce the same signature. Applications must account for this if signature uniqueness or unlinkability is a requirement.
+- The scheme is fully deterministic — the same key and message always produce the same signature bytes. This is by design for SNARK-friendliness in compact certificates, but it means the signing implementation must be functionally equivalent across all devices. Using the same private key across implementations with differing floating-point behaviour is a security concern; the vendored C library enforces integer FP emulation (`FALCON_FPEMU=1`) to mitigate this.
 
 ## Building
 

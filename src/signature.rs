@@ -13,7 +13,7 @@ use crate::{
     ffi::falcon_det1024_convert_compressed_to_ct,
 };
 
-/// A Falcon-det1024 signature in compressed (Huffman-coded) format.
+/// A Falcon-DET1024 signature in compressed (Huffman-coded) format.
 ///
 /// Structural integrity (header byte, salt version, length) is validated on construction.
 /// Cryptographic validity requires a separate call to [`PublicKey::verify_compressed`].
@@ -77,7 +77,7 @@ impl CompressedSignature {
     }
 }
 
-/// A Falcon-det1024 signature in constant-time (CT) format.
+/// A Falcon-DET1024 signature in constant-time (CT) format.
 ///
 /// Always exactly [`FALCON_DET1024_SIG_CT_SIZE`] bytes. Structural integrity (header byte,
 /// salt version) is validated on construction. Cryptographic validity requires a separate

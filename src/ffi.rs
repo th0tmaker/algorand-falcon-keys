@@ -45,7 +45,7 @@ unsafe extern "C" {
         seed_len: usize,
     );
 
-    /// Generates a Falcon-det1024 keypair driven by the PRNG state in `rng`.
+    /// Generates a Falcon-DET1024 keypair driven by the PRNG state in `rng`.
     /// Writes `FALCON_DET1024_PRIVKEY_SIZE` bytes to `privkey`
     /// and `FALCON_DET1024_PUBKEY_SIZE` bytes to `pubkey`.
     pub fn falcon_det1024_keygen(
