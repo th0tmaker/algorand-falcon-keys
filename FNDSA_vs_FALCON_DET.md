@@ -442,7 +442,7 @@ A reasonable differentiated approach:
 | Protocol component | Recommended variant | Reason |
 |---|---|---|
 | Transaction signing | FN-DSA/1024 | pk binding, formal proof, NIST standard |
-| State proof signing | FN-DSA/1024 without pk binding, or Falcon-DET1024 | SNARK circuit efficiency |
+| State proof signing | FALCON-DET1024 | SNARK efficiency requires a fixed digest shared across all signers — only achievable with a deterministic (no random salt) variant; removing pk binding from FN-DSA alone does not help since the random salt still makes each signer's digest unique |
 | Ephemeral consensus keys | Either (Qs≈1, security loss argument collapses) | Operational preference |
 
 The conclusion that "FN-DSA vs Falcon-det is a binary choice" is likely false. Different protocol
