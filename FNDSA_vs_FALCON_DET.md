@@ -137,66 +137,35 @@ parameter set. Whether that margin is acceptable is a security-policy judgement,
   sufficient. Any improvement in lattice cryptanalysis directly translates to an attack on FN-DSA,
   and vice versa. FALCON-DET1024 has no formal security proof.
 
-  It is important to note that this gap was a **known and deliberate tradeoff**, not an oversight.
-  Chris Peikert — one of the architects behind the GPV framework itself — co-authored `falcon-det.pdf`.
-  He undoubtedly understood better than anyone what a GPV proof requires and where
-  the deterministic variant deviates from it. The Falcon specification itself (Section 2.2.2)
-  explicitly considered de-randomization and noted: *"While this solution can be applied in a few
-  specific use cases, we do not consider it for Falcon"* — acknowledging its legitimacy for
-  targeted applications while choosing hash randomization for the general scheme. FALCON-DET1024
-  is precisely one of those specific use cases. The `falcon-det.pdf` spec is honest about the
-  informal security reasoning and scopes the scheme to a specific use case (SNARK-friendly compact
-  certificates).
-  What changed is that the Paper 2024/1769 later formalised the GPV proof gap more precisely
-  and provided a proof for the randomised variant — a proof that did not exist when the
-  deterministic spec was written in 2021.
+  This gap was a **known and deliberate tradeoff**: Peikert — co-author of the GPV framework
+  itself — co-authored `falcon-det.pdf` and scoped the scheme explicitly to SNARK-friendly compact
+  certificates. The Falcon spec (Section 2.2.2) acknowledged de-randomization as legitimate for
+  targeted applications: *"While this solution can be applied in a few specific use cases, we do
+  not consider it for Falcon."* Paper 2024/1769 later formalised the gap and proved the randomised
+  variant secure — a proof that did not exist when the deterministic spec was written in 2021.
 
-  A critical contribution of the paper is Rényi order optimisation. **What the Rényi argument
-  does:** in any security reduction, the signatures the reduction produces while simulating honest
-  signing can't be identical to real ones — it's faking them without the real trapdoor. Rényi
-  divergence of order *a* between the simulated and real distributions is the formal measure of
-  how close they are, and directly determines the security loss. The reduction works by
-  *programming* the random oracle: for each signing query on message m, it picks a fresh salt *r*,
-  chooses a syndrome `c = H(pk, r, m)` it knows how to solve, and programs H(pk, r, m) = *c* in
-  its random oracle simulation. This only works if *r* is fresh and independent per query — the
-  reduction needs freedom to choose *c*. The Rényi argument then bounds how much this programmed
-  distribution diverges from the real one across all Q_s signing queries.
+  A critical contribution of the paper is Rényi order optimisation. The security reduction works by
+  *programming* the random oracle: for each signing query it picks a fresh salt *r*, chooses a
+  syndrome it can solve, and programs `H(pk, r, m) = c` in its simulation — requiring fresh,
+  independent *r* per query. Rényi divergence of order *a* then bounds how close this programmed
+  distribution is to the real one across all queries. The Falcon NIST spec used *a* = 2^λ,
+  producing a **60-bit loss** (279 → ~219 bits); Paper 2024/1769's optimised *a* cuts this to
+  **8 bits**. With the remaining ~15-bit random oracle query overhead: 279 − 8 − 15 ≈ **256 bits**
+  provable security. FALCON-DET1024 cannot claim these numbers — without a random salt the
+  reduction never starts and the Rényi argument has nothing to bound.
 
-  The choice of order *a* is a mathematical trade-off: higher *a* gives a tighter bound per query
-  but compounds worse over many queries. The Falcon NIST submission specification (cited as
-  [PFH+22] in Paper 2024/1769) recommends *a* = 2^λ — applying this naively to Falcon-1024 would
-  produce a **60-bit security loss**, leaving only ~219 bits of provable security. The paper's
-  optimised parameter selection reduces the Rényi loss to **8 bits**, recovering 52 bits. Combined
-  with the remaining ~15-bit loss from random oracle query overhead, the full proof delivers the
-  256-bit security target (279 − 8 − 15 ≈ 256). Without this optimisation, even Falcon+ with the
-  1024 parameter set would have been significantly undersecured.
-
-  FALCON-DET1024 cannot claim these provable security numbers. Without a random salt there is no
-  freedom to choose *c*, the random oracle cannot be programmed, the GPV reduction does not start,
-  and there is nothing to apply the Rényi optimisation to. The 113/119-bit (Falcon+/512) and
-  256-bit (Falcon+/1024) provable security figures are inaccessible to the deterministic variant
-  by construction.
-
-  How the Rényi argument applies across all three variants:
-
-  | Variant | Random oracle programmable? | Conditional distribution clean? | Rényi optimisation applies? |
+  | Variant | Oracle programmable? | Distribution clean? | Outcome |
   |---|---|---|---|
-  | FALCON-DET1024 | No — fixed salt gives no freedom to choose *c* | — | No — no reduction to apply it to |
-  | Standard Falcon | Yes — random *r* before the loop | No — fixed *c* during loop skews distribution of *s* | No — proof doesn't go through |
-  | Falcon+ / FN-DSA | Yes — fresh *r* on every loop iteration | Yes — joint rejection sampling over (r, s) | Yes — 8-bit loss, 256-bit provable security |
+  | FALCON-DET1024 | No — fixed salt | — | No reduction exists |
+  | Standard Falcon | Yes — random *r* before loop | No — fixed *c* skews *s* | Proof fails |
+  | Falcon+ / FN-DSA | Yes — fresh *r* per iteration | Yes | 8-bit loss, 256-bit security |
 
-  FALCON-DET1024 shares the same underlying parameters as Falcon+/1024, so it starts from the
-  same ~279-bit ISIS hardness baseline. This is reassuring in one sense — no known classical or
-  quantum attack comes close to that hardness, and cryptanalysts attacking the ISIS problem attack
-  both schemes equally. However, the ~279-bit figure is a lattice estimator result, not a theorem.
-  Without a proof reduction, there is no formal guarantee that breaking FALCON-DET1024 actually
-  requires solving ISIS. A proof reduction is what establishes that relationship rigorously: "if
-  you can forge a signature, I can solve ISIS." Without it, the security claim rests on a
-  plausibility argument rather than a mathematical equivalence. An attack exploiting the
-  deterministic structure specifically — bypassing the ISIS hardness entirely — cannot be formally
-  ruled out. The "Do Not Disturb" attack is exactly this kind of structural attack: it ignores the
-  ~279-bit ISIS hardness completely and exploits a floating-point property unique to deterministic
-  signing. The ISIS estimate says nothing about it.
+  FALCON-DET1024 shares the same ~279-bit ISIS baseline as Falcon+/1024 — no known attack comes
+  close and cryptanalysts attack both equally. But without a proof reduction the baseline is a
+  plausibility argument, not a theorem: there is no formal guarantee that forging a signature
+  requires solving ISIS. Structural attacks that bypass ISIS hardness entirely cannot be ruled out.
+  The Do Not Disturb attack is exactly this — it ignores the ~279-bit hardness completely and
+  exploits a floating-point property unique to deterministic signing.
 
 - **Public key binding** — FN-DSA incorporates a hash of the public key into every signature:
   `H(hpk, r, m)` instead of `H(r, m)`. Without binding, multi-user security degrades by
