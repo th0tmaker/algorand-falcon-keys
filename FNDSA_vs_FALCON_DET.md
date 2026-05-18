@@ -31,18 +31,31 @@ This document compares two post-quantum signature schemes:
 The comparison covers security, protocol fit, practical migration implications, and open questions
 raised in community discussion.
 
-> **On the word "determinism":** Two distinct notions appear in this document and should not be
-> confused. *Signing determinism* means the same private key and message always produce the same
-> signature bytes — this is FALCON-DET1024's defining property. *Computation determinism* means
-> the signing algorithm produces consistent results across different hardware and compiler
-> configurations — this is the floating-point emulation (`FALCON_FPEMU`) concern. The two are
-> related but separate: signing determinism requires computation determinism as a precondition,
-> but computation determinism alone does not imply signing determinism. Unless stated otherwise,
-> "determinism" in this document refers to signing determinism.
+> **On the word "determinism":** Three related but distinct notions appear in this document.
+>
+> *Signing determinism* means the same private key and message always produce the same signature
+> bytes — FALCON-DET1024's defining property. Achieving it requires two computational preconditions:
+>
+> - **Deterministic random tape**: the PRF `SHAKE(logn‖privkey‖data)` ensures the same
+>   pseudorandom byte stream is generated on every signing call for the same key and message.
+> - **Functional equivalence**: the signing algorithm that consumes those bytes must have the same
+>   input-output behaviour across different hardware and compiler configurations — this is the
+>   floating-point emulation (`FALCON_FPEMU`) concern.
+>
+> The spec (Section 3.4.2) states explicitly: *"it is not enough to generate a repeatable stream of
+> pseudorandom bytes; the actual signing procedures that consume those bytes should ideally be
+> functionally equivalent."* A repeatable tape without functional equivalence is insufficient.
+>
+> The spec also includes a `salt_version_byte` as an escape hatch: when functional equivalence
+> breaks — due to a bug fix, optimisation, or platform change — incrementing the version refreshes
+> the message-to-syndrome mapping without requiring key replacement.
+>
+> Unless stated otherwise, "determinism" in this document refers to signing determinism.
 
 > **Note on Paper 2024/1769:** Throughout this document, "Paper 2024/1769" refers to IACR ePrint
 > 2024/1769, *"A Closer Look at Falcon"* (Fouque, Gajland, de Groote, Janneck, Kiltz) — first
-> received October 2024, last revised March 2, 2026, published at the EUROCRYPT 2026 conference.
+> received October 2024, last revised March 2, 2026, published in *Advances in Cryptology –
+> EUROCRYPT 2026* (Springer LNCS), May 2026.
 > Short URL: https://ia.cr/2024/1769
 
 > **Note on Paper 2024/1709:** Throughout this document, "Paper 2024/1709" refers to IACR ePrint
@@ -335,9 +348,10 @@ parameter set. Whether that margin is acceptable is a security-policy judgement,
   modifications in `rust-fn-dsa` (`[Por25a, Por25b]` in the Paper 2024/1769). His design
   history is instructive: RFC 6979 made ECDSA deterministic because ECDSA nonce reuse directly
   exposes the private key — a critical vulnerability requiring a fix. In ECDSA, the signature is
-  `s = k⁻¹(hash(m) + r·x) mod n` where `k` is the random nonce and `x` is the private key. If
+  `s = k⁻¹(hash(m) + r·d) mod n` where `k` is the random nonce, `r = (k·G).x mod n` is the
+  x-coordinate of the resulting curve point, and `d` is the private key. If
   the same `k` is used for two different messages, two equations share the same unknowns and
-  solving for `x` is trivial linear algebra — two signatures is all it takes. This is exactly
+  solving for `d` is trivial linear algebra — two signatures is all it takes. This is exactly
   what happened to the PlayStation 3 (2010, static `k`) and to Android Bitcoin wallets (2013,
   weak PRNG producing repeated `k` values). RFC 6979 fixed this by deriving `k` deterministically
   from the private key and message, making nonce reuse structurally impossible. Determinism was
@@ -535,9 +549,10 @@ two devices produce slightly different FP results, both outputs are still valid 
 signatures — different bytes, both acceptable to a verifier. In deterministic Falcon, two signing
 calls on the same key and message are supposed to produce identical bytes. FP divergence between
 devices breaks that guarantee and, as the "Do Not Disturb" paper demonstrated, can expose the
-private key when the same input is processed with different FP behaviour. FPEMU is therefore
-necessary for correctness in the randomised case and load-bearing for security in the deterministic
-case.
+private key when the same input is processed with different FP behaviour. FPEMU ensures single-machine algorithmic consistency in both cases, but the stakes differ: in the
+randomised case, cross-device FP divergence produces different-but-valid signatures — a non-issue;
+in the deterministic case, it breaks the fundamental invariant and enables the Do Not Disturb
+attack, making it load-bearing for security.
 
 The spec mandates `FALCON_FPEMU=1` as the solution, with a measured performance cost: signing is
 **~15x slower** with FPEMU enabled (key generation ~2x slower; verification unaffected since it
@@ -676,11 +691,14 @@ vulnerability arises from a discontinuity in Falcon's `SamplerZ` around near-int
 values: a tiny FP error ε can flip `floor(c)`, and by Lemma 1 of the paper, when `floor(c)`
 flips, the sampler executions are **guaranteed** to be inconsistent.
 
-Near-integer centers occur with non-negligible probability at exactly four positions during
-`ffSampling`: the first two and last two calls to `SamplerZ`. The probability at each is between
-1/10,000 and 1/20,000 — mathematically derived from the NTRU key structure (1/q ≈ 1/12,289 for
-the first two, 1/‖(g,−f)‖² for the last two). All other positions have denominator ≳ q²,
-making integer centers negligibly rare and practically undetectable in double precision.
+Near-integer centers occur with non-negligible probability at six positions during
+`ffSampling` — the three outermost and three innermost calls to `SamplerZ` in the recursion
+tree (k = 0, 1, 2 and k = n−3, n−2, n−1). These are the same six positions the countermeasure
+must address (Section 7.1 of the paper). Probability is highest at the outermost pair: between
+1/10,000 and 1/20,000, derived from the NTRU key structure (denominator q ≈ 12,289 for k = 0,
+denominator ‖(g,−f)‖² for k = n−1); the four middle positions carry progressively smaller but
+still non-negligible probabilities. All other positions have denominators exceeding
+double-precision floating-point range, making integer centers undetectable in practice.
 
 A discrepancy at the **last two** calls introduces a structured difference in just two components
 of the output — specifically, `∆z0 = a + b·x^{n/2}` where a and b each range over at most 38
@@ -701,8 +719,8 @@ Three distinct probabilities describe the vulnerability:
 Key recovery follows from a single exploitable pair via an exhaustive search of 38² = 1,444
 candidates.
 
-The paper formally characterises the attack as violating **unbreakability under chosen-message
-attacks** — a complete break of the standard security definition, not merely a practical concern.
+The paper formally characterises the attack as violating **unforgeability under chosen-message
+attacks** (EUF-CMA) — a complete break of the standard security definition, not merely a practical concern.
 
 **Why FN-DSA is not vulnerable — the precise reason:**
 
@@ -818,7 +836,7 @@ The dynamic/tree API discrepancy can be eliminated by a targeted change of just 
 in `sign_tree`'s bottom recursion layer (n=4), reordering the FP operations to match `sign_dyn`.
 Alternatively, the code base already contains a simpler n=2 bottom layer that doesn't have the
 re-ordering issue, or an even simpler n=1 bottom layer that exists in commented-out form —
-skipping to either eliminates the discrepancy with no algorithmic change.
+skipping to either eliminates the discrepancy with no change to Falcon's cryptographic operations.
 Testing with 10 million sign_dyn/sign_tree pairs after either fix: zero discrepancies, no
 measurable performance impact. This fix does not address the FMA discrepancy; for full protection,
 FPEMU should also be consistently enforced.
@@ -857,7 +875,7 @@ It is further from the proven framework than even standard unmodified Falcon.
 | Variable-length signatures | Spec explicitly rejects padded format (1280 bytes) because the retry it requires would violate determinism |
 | FP attack surface | "Do Not Disturb a Sleeping Falcon" (Paper 2024/1709): signing the same message twice under different FP conditions exposes the private key via a structured sampler output difference. Near-integer center probability: 1/10,000–1/20,000 per call; key recovery rate: ~1 in 10,000 signing pairs (Section 6.1); 50% recovery probability at 10,000 query pairs (Table 3) |
 | FPEMU does not fully protect | The "dynamic" vs "tree" API signing variants in the same FPEMU-enabled binary can produce exploitable discrepancies — FPEMU is necessary but not sufficient. A countermeasure exists (NewSamplerZ + odd key constraint) but requires re-keying: the C library always generates keys with `‖(g,−f)‖²` even, disqualifying all existing keys. Note: the Algorand `deterministic.c` wrapper calls only `sign_dyn`, so this specific discrepancy requires bypassing the wrapper and calling `sign_tree` directly from the underlying Falcon library with the same key |
-| C-only reference implementation | Libc linkage required; no pure Rust implementation exists for FALCON-DET1024 |
+| C-only reference implementation | Libc linkage required; no other pure implementation exists for FALCON-DET1024 |
 | Custom non-standard variant | No hardware acceleration, no ecosystem tooling, no multi-language library support |
 | Determinism assumed but not required | ABFT spec never mandated it; inherited from Ed25519 convention |
 | QROM security unproven | Even FN-DSA lacks a quantum random oracle model proof — an open problem noted in the Paper 2024/1769 |
@@ -917,8 +935,8 @@ implementations is appropriate; shipping in production is premature until the st
   https://github.com/algorandfoundation/specs/releases/tag/7791a63
 - Fouque (Université de Rennes, IUF), Gajland (IBM Research Zurich), de Groote (ENS Paris-Saclay),
   Janneck (Ruhr University Bochum), Kiltz (Ruhr University Bochum) —
-  *A Closer Look at Falcon*, IACR ePrint 2024/1769 (received 2024-10-30, last revised 2026-03-02).
-  A major revision of an IACR publication in EUROCRYPT 2026.
+  *A Closer Look at Falcon*, in *Advances in Cryptology – EUROCRYPT 2026*, Lecture Notes in
+  Computer Science, Springer, May 2026. IACR ePrint 2024/1769 (received 2024-10-30, last revised 2026-03-02).
   Short URL: https://ia.cr/2024/1769
 - Lin, Tibouchi, Yu, Zhang — *Do Not Disturb a Sleeping Falcon: Floating-Point Error Sensitivity
   of the Falcon Sampler and Its Consequences*, IACR ePrint 2024/1709, EUROCRYPT 2025.
