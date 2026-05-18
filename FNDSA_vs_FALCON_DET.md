@@ -31,6 +31,8 @@ This document compares two post-quantum signature schemes:
 The comparison covers security, protocol fit, practical migration implications, and open questions
 raised in community discussion.
 
+> [!NOTE]
+>
 > **On the word "determinism":** Three related but distinct notions appear in this document.
 >
 > *Signing determinism* means the same private key and message always produce the same signature
@@ -52,18 +54,18 @@ raised in community discussion.
 >
 > Unless stated otherwise, "determinism" in this document refers to signing determinism.
 
-> **Note on Paper 2024/1769:** Throughout this document, "Paper 2024/1769" refers to IACR ePrint
+> **On Paper 2024/1769:** Throughout this document, "Paper 2024/1769" refers to IACR ePrint
 > 2024/1769, *"A Closer Look at Falcon"* (Fouque, Gajland, de Groote, Janneck, Kiltz) — first
 > received October 2024, last revised March 2, 2026, published in *Advances in Cryptology –
 > EUROCRYPT 2026* (Springer LNCS), May 2026.
 > Short URL: https://ia.cr/2024/1769
 
-> **Note on Paper 2024/1709:** Throughout this document, "Paper 2024/1709" refers to IACR ePrint
+> **On Paper 2024/1709:** Throughout this document, "Paper 2024/1709" refers to IACR ePrint
 > 2024/1709, *"Do Not Disturb a Sleeping Falcon: Floating-Point Error Sensitivity of the Falcon
 > Sampler and Its Consequences"* (Lin, Tibouchi, Yu, Zhang) — published at the EUROCRYPT 2025
 > conference. Short URL: https://ia.cr/2024/1709
 
-> **Note on Paper 2024/710:** Throughout this document, "Paper 2024/710" refers to IACR ePrint
+> **On Paper 2024/710:** Throughout this document, "Paper 2024/710" refers to IACR ePrint
 > 2024/710, *"BUFFing FALCON without Increasing the Signature Size"* (Düzlü, Fiedler, Fischlin).
 > Short URL: https://ia.cr/2024/710
 
