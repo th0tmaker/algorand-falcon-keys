@@ -28,8 +28,8 @@ This document compares two post-quantum signature schemes:
 - **FN-DSA** — the forthcoming NIST standard (FIPS 206), based on Falcon with conservative modifications
   that enable a formal security proof.
 
-The comparison covers security, protocol fit, practical migration implications, and open questions
-raised in community discussion.
+**The comparison covers security, protocol fit, practical migration implications, and open questions
+raised in community discussion.**
 
 > [!NOTE]
 >
@@ -88,7 +88,7 @@ Both schemes are built on identical mathematical primitives:
 The Paper 2024/1769's lattice estimator (Figure 11) gives raw ISIS hardness as 2^121.2 for
 n=512 and 2^279.2 for n=1024. The paper's summary table rounds these to 120 and 278; both
 representations appear throughout this document. The ~279-bit hardness for n=1024 provides a
-23-bit buffer above the 256-bit target, comfortably absorbing the 8-bit Rényi divergence loss.
+23-bit buffer above the 256-bit target.
 
 ---
 
@@ -151,23 +151,39 @@ parameter set. Whether that margin is acceptable is a security-policy judgement,
   and provided a proof for the randomised variant — a proof that did not exist when the
   deterministic spec was written in 2021.
 
-  A critical contribution of the paper is Rényi order optimisation. The Falcon NIST submission
-  specification (cited as [PFH+22] in Paper 2024/1769) recommends a Rényi divergence order of
-  a=2^λ — applying this naively to Falcon-1024 would
+  A critical contribution of the paper is Rényi order optimisation. **What the Rényi argument
+  does:** in any security reduction, the signatures the reduction produces while simulating honest
+  signing can't be identical to real ones — it's faking them without the real trapdoor. Rényi
+  divergence of order *a* between the simulated and real distributions is the formal measure of
+  how close they are, and directly determines the security loss. The reduction works by
+  *programming* the random oracle: for each signing query on message m, it picks a fresh salt *r*,
+  chooses a syndrome `c = H(pk, r, m)` it knows how to solve, and programs H(pk, r, m) = *c* in
+  its random oracle simulation. This only works if *r* is fresh and independent per query — the
+  reduction needs freedom to choose *c*. The Rényi argument then bounds how much this programmed
+  distribution diverges from the real one across all Q_s signing queries.
+
+  The choice of order *a* is a mathematical trade-off: higher *a* gives a tighter bound per query
+  but compounds worse over many queries. The Falcon NIST submission specification (cited as
+  [PFH+22] in Paper 2024/1769) recommends *a* = 2^λ — applying this naively to Falcon-1024 would
   produce a **60-bit security loss**, leaving only ~219 bits of provable security. The paper's
   optimised parameter selection reduces the Rényi loss to **8 bits**, recovering 52 bits. Combined
   with the remaining ~15-bit loss from random oracle query overhead, the full proof delivers the
   256-bit security target (279 − 8 − 15 ≈ 256). Without this optimisation, even Falcon+ with the
   1024 parameter set would have been significantly undersecured.
 
-  FALCON-DET1024 cannot claim these provable security numbers. The Rényi divergence optimisation
-  is part of the security reduction, not a property of the sampler in isolation. The reduction
-  works by programming the random oracle with fresh random salts for each signing query —
-  `H(pk, r, m)` — and using the Rényi argument to bound how close the programmed outputs are to
-  uniform. Without a random salt, the random oracle cannot be programmed this way, the GPV
-  reduction does not go through at all, and there is nothing to apply the Rényi optimisation to.
-  The 113/119-bit (Falcon+/512) and 256-bit (Falcon+/1024) provable security figures are
-  inaccessible to the deterministic variant by construction.
+  FALCON-DET1024 cannot claim these provable security numbers. Without a random salt there is no
+  freedom to choose *c*, the random oracle cannot be programmed, the GPV reduction does not start,
+  and there is nothing to apply the Rényi optimisation to. The 113/119-bit (Falcon+/512) and
+  256-bit (Falcon+/1024) provable security figures are inaccessible to the deterministic variant
+  by construction.
+
+  How the Rényi argument applies across all three variants:
+
+  | Variant | Random oracle programmable? | Conditional distribution clean? | Rényi optimisation applies? |
+  |---|---|---|---|
+  | FALCON-DET1024 | No — fixed salt gives no freedom to choose *c* | — | No — no reduction to apply it to |
+  | Standard Falcon | Yes — random *r* before the loop | No — fixed *c* during loop skews distribution of *s* | No — proof doesn't go through |
+  | Falcon+ / FN-DSA | Yes — fresh *r* on every loop iteration | Yes — joint rejection sampling over (r, s) | Yes — 8-bit loss, 256-bit provable security |
 
   FALCON-DET1024 shares the same underlying parameters as Falcon+/1024, so it starts from the
   same ~279-bit ISIS hardness baseline. This is reassuring in one sense — no known classical or
@@ -189,11 +205,8 @@ parameter set. Whether that margin is acceptable is a security-policy judgement,
   the Pornin-Stern transformation [PS05], known since 2005 and described as "standard
   cryptographic practice" and "good cryptographic engineering" in the Paper 2024/1769.
 
-- **Salt resampling inside the rejection loop (Falcon+ modification)** — In standard Falcon the
-  random salt `r` is fixed before the rejection loop. In FN-DSA, a fresh `r` is drawn on each
-  rejection. This resolves the conditional distribution problem that prevented the GPV proof from
-  applying and is the core modification that makes a formal security proof possible. The deterministic
-  variant cannot resample because it has no `r` to change.
+- **Salt resampling inside the rejection loop (Falcon+ modification)** — the core structural
+  change enabling the formal proof; covered in detail in the Rényi section above.
 
 - **BUFF security (Beyond UnForgeability Features)** — FN-DSA achieves three additional security
   properties on top of standard unforgeability, formalised by Cremers et al. and shown to follow
@@ -346,9 +359,7 @@ parameter set. Whether that margin is acceptable is a security-policy judgement,
   and easy to omit. FN-DSA builds it into the primitive, enabling explicit separation between
   transactions, state proofs, and consensus votes using the same key without collision risk.
 
-- **Pornin's canonical implementation** — Thomas Pornin has implemented FN-DSA with Falcon+
-  modifications in `rust-fn-dsa` (`[Por25a, Por25b]` in the Paper 2024/1769). His design
-  history is instructive: RFC 6979 made ECDSA deterministic because ECDSA nonce reuse directly
+- **Why Pornin chose non-determinism for FN-DSA** — His design history is instructive: RFC 6979 made ECDSA deterministic because ECDSA nonce reuse directly
   exposes the private key — a critical vulnerability requiring a fix. In ECDSA, the signature is
   `s = k⁻¹(hash(m) + r·d) mod n` where `k` is the random nonce, `r = (k·G).x mod n` is the
   x-coordinate of the resulting curve point, and `d` is the private key. If
@@ -717,9 +728,6 @@ Three distinct probabilities describe the vulnerability:
 - **Key recovery rate** — "around one in every 10,000 or so pairs" (paper's own words, Section
   6.1), confirmed by Table 3: `fpemu_det_1024` with 10,000 query pairs → 50% key recovery
   probability; 100,000 query pairs → 90% key recovery probability.
-
-Key recovery follows from a single exploitable pair via an exhaustive search of 38² = 1,444
-candidates.
 
 The paper formally characterises the attack as violating **unforgeability under chosen-message
 attacks** (EUF-CMA) — a complete break of the standard security definition, not merely a practical concern.
