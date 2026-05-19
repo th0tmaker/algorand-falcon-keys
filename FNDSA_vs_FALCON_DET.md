@@ -31,6 +31,22 @@ This document compares two post-quantum signature schemes:
 **The comparison covers security, protocol fit, practical migration implications, and open questions
 raised in community discussion.**
 
+### Why This Migration Is Urgent — The HNDL Threat
+
+The motivation for post-quantum migration is the **Harvest Now, Decrypt Later (HNDL)** attack:
+adversaries with sufficient storage are already collecting encrypted traffic and signed data
+today, intending to break it once a cryptographically-relevant quantum computer (CRQC) exists.
+For encryption, this creates immediate urgency — data encrypted today under RSA or ECC could be
+decrypted years from now. For signatures, the exposure is different but still real: long-lived
+account keys or signing keys registered today could be targeted if a CRQC ever allows key
+extraction from public keys or observed signatures.
+
+The timeline for CRQCs remains uncertain. Most estimates place a cryptographically capable
+machine 10–20 years away, but the uncertainty cuts both ways — it could arrive sooner, and
+migration of a live blockchain is a multi-year process. The practical guidance is: start the
+migration engineering work now, so the protocol is ready before the threat materialises rather
+than in response to it.
+
 > [!NOTE]
 >
 > **On the word "determinism":** Three related but distinct notions appear in this document.
@@ -111,8 +127,9 @@ as ~8 bits Rényi loss and ~15 bits random oracle query overhead.
 
 Falcon-512's ISIS hardness sits at ~121 bits — close to the NIST Level I target with little margin.
 The 113/119-bit provable security figures at Qs=2^64/2^58 are **proof tightness** results, not
-concrete exploitable attacks: no known attack on Falcon-512 improves with more observed signatures.
-The Rényi divergence loss is an artifact of the security reduction, not an adversarial capability.
+concrete exploitable attacks: no known lattice attack on Falcon-512 improves with more observed
+signatures. The Rényi divergence loss is an artifact of the security reduction, not an adversarial
+capability.
 
 The real concern for long-lived Falcon-512 keys is different: the thin ISIS baseline leaves almost
 no room for future algorithmic improvements. Lattice cryptanalysis has historically advanced, and a
@@ -317,9 +334,10 @@ parameter set. Whether that margin is acceptable is a security-policy judgement,
 - **Domain separation context strings** — FN-DSA includes a context string input as part of
   the cryptographic primitive itself, confirmed by the IETF CMS draft (draft-turner-lamps-cms-fn-dsa-00):
   *"FN-DSA has a context string input that can be used to ensure that different signatures are
-  generated for different application contexts."* The maximum size is not confirmed from our
-  primary sources but is almost certainly 255 bytes — FIPS 204 (ML-DSA) and FIPS 205 (SLH-DSA)
-  both use this limit and NIST applied it consistently across all three PQC signature standards.
+  generated for different application contexts."* The maximum size is **255 bytes**, confirmed
+  directly in FIPS 204 (ML-DSA) and FIPS 205 (SLH-DSA) — both encode the context as
+  `len(ctx) || ctx` with a 1-byte length prefix, enforcing a 255-byte maximum and returning an
+  error if exceeded. NIST applied this consistently across all three PQC signature standards.
 
   This is a FIPS 206 standardisation addition — neither the original Falcon specification (v1.2)
   nor FALCON-DET1024 include a context string mechanism. Both hash only the salt and message:
@@ -463,8 +481,12 @@ randomness in FN-DSA is a security concern, but not the "sign twice = key expose
 that made RFC 6979 necessary.
 
 That said, the RNG concern is stronger in the blockchain context than it would be in general
-software, and dismissing it entirely is wrong. Several environments common in the blockchain
-ecosystem either lack reliable OS-level entropy or make RNG access structurally difficult:
+software, and dismissing it entirely is wrong. The PQC community itself raised this concern
+explicitly during FN-DSA standardisation — John Mattsson asked on the NIST PQC Forum whether
+FN-DSA's randomization would follow "randomized ECDSA that was used in PS3 software signing"
+or hedge like ML-DSA, directly naming the blockchain entropy failure scenario. Several
+environments common in the blockchain ecosystem either lack reliable OS-level entropy or make
+RNG access structurally difficult:
 
 - **Smart contract VMs** (EVM, WASM-based chains like Near, Polkadot, ICP, and Algorand's own
   AVM) — deterministic execution environments with no access to OS entropy by design. RNG
@@ -486,6 +508,64 @@ pseudorandom derivation from the private key and a blockchain seed, not OS-level
 signing time. The RNG argument is a legitimate general motivation for the deterministic design
 and is a real constraint in the categories above, but it does not constitute a technical
 objection to adopting FN-DSA for Algorand transaction signing specifically.
+
+**Hedged signing — NIST's answer to the entropy problem:**
+
+FIPS 204 (ML-DSA) and FIPS 205 (SLH-DSA) both specify a "hedged" signing mode as the default,
+which directly addresses the entropy starvation and VM reset concerns without requiring full
+determinism. The nonce is derived as a three-way PRF:
+
+```
+nonce = H(secret_key_seed || fresh_random || message_hash)
+```
+
+Concretely in ML-DSA (FIPS 204): `rho'' = H(K || rnd || mu, 64)` where `K` is a secret seed
+embedded in the private key, `rnd` is 32 bytes from the system RNG, and `mu` is a hash of the
+public key and message. FIPS 205 uses the same structure.
+
+NIST's own rationale (FIPS 204, Section 3.4):
+> *"The use of fresh randomness during signing helps mitigate side-channel attacks, while the use
+> of precomputed randomness protects against the possibility that there may be flaws in the random
+> number generator used by the signer at signing time."*
+
+This creates a "no single point of failure" design:
+- If the RNG is good → fully randomized, maximum side-channel resistance
+- If the RNG fails or produces repeated output → the secret key + message still produce a unique,
+  unpredictable nonce, because an attacker who doesn't know `K` cannot predict the output
+- If the RNG produces all zeros → the scheme degrades gracefully to deterministic, identical to
+  FALCON-DET1024's approach
+
+Both FIPS 204 and FIPS 205 also permit a fully deterministic variant (`rnd = {0}^32`) but
+explicitly warn against it on platforms where fault or side-channel attacks are a concern.
+
+FIPS 206 (FN-DSA) has not been finalised yet, but the PQC standardisation community has been
+actively pushing for hedged signing to be the default. In an October–November 2025 thread on
+the NIST PQC Forum, John Mattsson (Ericsson) explicitly raised the PS3/randomized-ECDSA
+failure scenario and asked whether FN-DSA would hedge like ML-DSA: *"We hope it is hedged."*
+Ray Perlner (NIST) responded: *"We welcome feedback on John Mattsson's suggestion that hedged
+signing be preferred over plain randomized signing"* — confirming NIST's direction.
+
+Thomas Pornin (Falcon's principal author) proposed a concrete FN-DSA hedging formula in the
+same thread:
+```
+derived_seed = SHAKE256(SHAKE256(f || g)[40] || mu || rng_seed)[40]
+```
+This hashes the private key polynomials `(f, g)` first, then combines with the message hash `mu`
+and fresh `rng_seed` — the same three-way structure as ML-DSA but memory-efficient for
+constrained implementations since it avoids needing the full encoded private key in memory.
+
+**Where hedged signing sits relative to the three-way tradeoff:**
+
+| Approach | Entropy failure | Fault attack resistance |
+|---|---|---|
+| Pure randomized (standard Falcon) | Vulnerable | Strong — attacker can't predict nonce |
+| **Hedged (FIPS 204/205/206 default)** | **Graceful degradation** | **Conditional — weakens only if entropy also fails** |
+| Fully deterministic (FALCON-DET1024) | Immune | Weak — nonce always predictable |
+
+Hedged signing narrows the fault attack exposure: triggering it requires both broken entropy AND
+successful fault injection simultaneously, compared to FALCON-DET1024 where fault injection alone
+is sufficient. For blockchain deployments where entropy quality is uncertain, hedged signing is
+the more principled middle ground — and it is what NIST standardised, not pure randomness.
 
 ### "The blockchain industry doesn't always follow NIST"
 
@@ -633,6 +713,48 @@ mitigations:
   10 years) while `sig_root` persists forever
 - **Tiered storage**: recent witness data on fast storage, historical on cold storage
 
+### Multi-Signature Implications
+
+Algorand supports native M-of-N MultiSig accounts. The current Ed25519 implementation benefits
+from linear algebraic structure — verification is straightforward polynomial arithmetic over the
+same field. FN-DSA has no analogous algebraic linearity, which has two practical consequences:
+
+- **Key and signature sizes multiply**: an M-of-N MultiSig with FN-DSA requires storing N
+  public keys (N × 1793 bytes) on-chain as part of the account configuration, vs. N × 32 bytes
+  today. For large committees this is a meaningful on-chain storage increase.
+- **No native aggregation**: unlike Schnorr-based schemes where M signatures can be aggregated
+  into one, each FN-DSA co-signer contributes a separate 1280-byte signature. An M-of-N
+  threshold produces M independent signatures, all of which must be included and verified.
+
+These are engineering constraints, not security problems — MultiSig still works, it just
+occupies more space and requires M separate verification calls. Mitigation paths include
+on-chain storage of a hash of the MultiSig public key set (with the full key set supplied at
+spend time) and SNARK aggregation of the M verification proofs into a single proof for
+block-level processing.
+
+### Migration Path and Hybrid Period
+
+Algorand's existing Ed25519 accounts cannot be migrated atomically — there is no mechanism to
+force all existing key holders to re-key simultaneously. A realistic migration path requires a
+hybrid period:
+
+1. **Dual-key accounts**: allow accounts to register a FN-DSA public key alongside their
+   existing Ed25519 key. The address is derived from a commitment to both:
+   `SHA512/256("HybridAddr" || ed25519_pk || fndsa_pk)`. Both keys can sign; validators accept
+   either. This is the pattern already described in the Account Address Scheme section.
+
+2. **Deprecation window**: announce a future block height after which Ed25519-only signatures
+   will no longer be accepted for new transactions. Accounts that have not registered a FN-DSA
+   key by that block height would need to migrate before spending.
+
+3. **Quantum-vulnerable account handling**: accounts that never registered a FN-DSA key and
+   whose Ed25519 private key may be at quantum risk represent the hardest migration challenge.
+   This is an unsolved problem common to all blockchain PQC migrations — there is no safe way
+   to migrate an account whose private key is unknown or inaccessible.
+
+The engineering work for the hybrid period is the critical path. Starting now allows Algorand to
+have the infrastructure ready before any quantum threat becomes concrete.
+
 ### Batch Verification Loss
 
 Ed25519 supports batch verification — verifying N signatures together via a single multi-scalar
@@ -659,7 +781,21 @@ must be verified independently. Mitigations:
 
 ## The "Do Not Disturb a Sleeping Falcon" Attack
 
-The paper 2024/1709 (Lin, Tibouchi, Yu, Zhang) identified a practical attack directly relevant
+Two distinct senses of "more signatures weakening a scheme" are worth separating before
+describing this attack:
+
+- **Lattice cryptanalysis** — best known attacks against Falcon target the NTRU lattice structure
+  from the public key directly and do not improve with more observed signatures. Signing more
+  messages exposes no more of the key to an attacker in either randomized Falcon or FALCON-DET1024.
+- **FP discrepancy attack (FALCON-DET1024 only)** — this is not a lattice attack. It requires
+  signing the *same message twice* under *different floating-point conditions*. More same-message
+  signing pairs increase the probability of hitting a discrepancy event — but only when the FP
+  divergence condition is present. Two calls under identical FP conditions produce the same
+  deterministic output with no attack surface. For randomized Falcon and FN-DSA, this attack
+  surface does not exist: each call draws a fresh salt so the sampler is never called twice on
+  the same input regardless of how many signatures are produced.
+
+Paper 2024/1709 (Lin, Tibouchi, Yu, Zhang) identified a practical attack directly relevant
 to the deterministic variant:
 
 > *"When called twice on the same input with small floating-point discrepancies, the Falcon sampler
@@ -761,6 +897,13 @@ trigger the attack even under the recommended configuration:
    last-two-call fraction is lower. Key recovery rates across both sources are experimentally
    similar (Tables 3 and 5).
 
+   This FMA discrepancy was independently observed on ARMv8 hardware as early as 2022:
+   Nguyen and Gaj (*Fast Falcon Signature Generation and Verification Using ARMv8 NEON
+   Instructions*, NIST PQC Conference 2022) measured 7,000 out of 100,000 outputs of
+   `fpr_expm_p63` differing between FMA and non-FMA code on both Apple M1 and Cortex-A72,
+   and disabled FMA by default in their implementation for this reason. Paper 2024/1709
+   later formalised this as a concrete key-recovery attack.
+
 The FALCON-DET1024 authors correctly identified the unsupported FP variants as dangerous and
 warned against them. The paper demonstrates that they missed a vulnerability in the configuration
 they considered safe: using both signing APIs with the same key is sufficient to trigger key
@@ -772,8 +915,6 @@ discrepancy is therefore only reachable in practice if a caller bypasses the wra
 the underlying Falcon library's `sign_tree` directly with the same key. Within normal use of the
 `falcon_det1024_sign_compressed` API the vulnerability path does not exist. The risk arises only
 if the key is shared between the deterministic wrapper and direct calls to the base Falcon library.
-
-FPEMU is necessary but not sufficient.
 
 **The blockchain passive scan scenario:**
 
@@ -825,8 +966,7 @@ FPEMU should also be consistently enforced.
 The paper's acknowledgements state: *"We would like to thank Chris Peikert and Thomas Pornin for
 useful comments and discussions on a previous version of this paper."* Both the co-designer of
 FALCON-DET1024 (Peikert) and Falcon's principal author and `rust-fn-dsa` implementor (Pornin)
-reviewed the paper's findings before publication. Neither contested them. This confirms the
-paper's conclusions are accepted by the original authors of both schemes.
+are aware of the paper's findings.
 
 ---
 
@@ -855,9 +995,8 @@ It is further from the proven framework than even standard unmodified Falcon.
 | FP attack surface | "Do Not Disturb a Sleeping Falcon" (Paper 2024/1709): signing the same message twice under different FP conditions exposes the private key via a structured sampler output difference. Near-integer center probability: 1/10,000–1/20,000 per call; key recovery rate: ~1 in 10,000 signing pairs (Section 6.1); 50% recovery probability at 10,000 query pairs (Table 3) |
 | FPEMU does not fully protect | The "dynamic" vs "tree" API signing variants in the same FPEMU-enabled binary can produce exploitable discrepancies — FPEMU is necessary but not sufficient. A countermeasure exists (NewSamplerZ + odd key constraint) but requires re-keying: the C library always generates keys with `‖(g,−f)‖²` even, disqualifying all existing keys. Note: the Algorand `deterministic.c` wrapper calls only `sign_dyn`, so this specific discrepancy requires bypassing the wrapper and calling `sign_tree` directly from the underlying Falcon library with the same key |
 | C-only reference implementation | Libc linkage required; no other pure implementation exists for FALCON-DET1024 |
-| Custom non-standard variant | No hardware acceleration, no ecosystem tooling, no multi-language library support |
-| Determinism assumed but not required | ABFT spec never mandated it; inherited from Ed25519 convention |
-| QROM security unproven | Even FN-DSA lacks a quantum random oracle model proof — an open problem noted in the Paper 2024/1769 |
+| Custom non-standard variant | No hardware acceleration specific to FALCON-DET1024, no ecosystem tooling, no multi-language library support. Note: standard Falcon does have emerging FPGA implementations (e.g. Schmid et al., 2023 — first full FPGA signing and key generation on UltraScale+); the deterministic variant has none |
+| QROM security unproven | The abstract GPV framework has a QROM proof via [BDF+11], cited as an advantage in the Falcon specification. However, Falcon's concrete instantiation — FFO sampler, Rényi divergence arguments, salt-inside-loop, pk binding — introduces enough technical complexity that BDF+11 does not transfer directly. Paper 2024/1769 proves Falcon+ secure in the ROM but explicitly leaves QROM as an open problem: *"we leave as an open problem a proof in the quantum random oracle model (QROM), which could likely be achieved using the techniques from [BBD+23, FFH25], provided that the Rényi arguments can be handled correctly."* This gap applies equally to FALCON-DET1024 |
 
 ---
 
@@ -906,6 +1045,15 @@ each scheme actually provides and where each is genuinely suited.
 should be timed with or after NIST finalisation. Building and testing against current
 implementations is appropriate; shipping in production is premature until the standard lands.
 
+**Note on Hawk:** A newer lattice signature scheme called Hawk (Ducas et al., 2022), based on
+the Lattice Isomorphism Problem (LIP), specifically eliminates Falcon's floating-point discrete
+Gaussian sampling — the source of both the FP implementation complexity and the "Do Not
+Disturb" attack surface. On ARMv8 hardware it offers 17% smaller signatures than Falcon-512 (~5% smaller than
+Falcon-1024) and 3.3× faster signing, at the cost of 1.6–1.9× slower verification. It is not NIST-standardised
+and remains a research scheme. It is noted here as evidence that the design space contains
+alternatives that avoid both schemes' shared FP complexity, should Algorand wish to consider
+longer-term options beyond the FN-DSA vs FALCON-DET1024 comparison in this document.
+
 ---
 
 ## References
@@ -932,4 +1080,17 @@ implementations is appropriate; shipping in production is premature until the st
   https://github.com/algorand/falcon/blob/main/falcon-det.pdf
 - Pornin — `rust-fn-dsa` (2025): https://github.com/pornin/rust-fn-dsa
 - Pornin — RFC 6979, *Deterministic Usage of DSA and ECDSA*, 2013
+- NIST — *FIPS 204: Module-Lattice-Based Digital Signature Standard (ML-DSA)*, August 2024.
+  https://nvlpubs.nist.gov/nistpubs/fips/nist.fips.204.pdf
+- NIST — *FIPS 205: Stateless Hash-Based Digital Signature Standard (SLH-DSA)*, August 2024.
+  https://nvlpubs.nist.gov/nistpubs/fips/nist.fips.205.pdf
+- Nguyen, Gaj — *Fast Falcon Signature Generation and Verification Using ARMv8 NEON Instructions*,
+  4th NIST PQC Standardization Conference, 2022.
+  https://csrc.nist.gov/csrc/media/Events/2022/fourth-pqc-standardization-conference/documents/papers/fast-falcon-signature-generation-and-verification-pqc2022.pdf
+- Mattsson, Perlner, Pornin, Lyubashevsky et al. — *NIST PQC Forum: FN-DSA discussion thread
+  (hedged signing, security levels, message recovery)*, October–November 2025.
+  https://groups.google.com/a/list.nist.gov/g/pqc-forum/c/1HXzjlMUU6Y
+- Turner — *Use of the FN-DSA Signature Algorithm in the Cryptographic Message Syntax (CMS)*,
+  IETF Internet-Draft draft-turner-lamps-cms-fn-dsa-00.
+  https://www.ietf.org/archive/id/draft-turner-lamps-cms-fn-dsa-00.txt
 
