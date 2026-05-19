@@ -119,20 +119,14 @@ materialises.
 >
 > Unless stated otherwise, "determinism" in this document refers to signing determinism.
 
-> **On Paper 2024/1769:** Throughout this document, "Paper 2024/1769" refers to IACR ePrint
-> 2024/1769, *"A Closer Look at Falcon"* (Fouque, Gajland, de Groote, Janneck, Kiltz) — first
-> received October 2024, last revised March 2, 2026, published in *Advances in Cryptology –
-> EUROCRYPT 2026* (Springer LNCS), May 2026.
-> Short URL: https://ia.cr/2024/1769
-
-> **On Paper 2024/1709:** Throughout this document, "Paper 2024/1709" refers to IACR ePrint
-> 2024/1709, *"Do Not Disturb a Sleeping Falcon: Floating-Point Error Sensitivity of the Falcon
-> Sampler and Its Consequences"* (Lin, Tibouchi, Yu, Zhang) — published at the EUROCRYPT 2025
-> conference. Short URL: https://ia.cr/2024/1709
-
-> **On Paper 2024/710:** Throughout this document, "Paper 2024/710" refers to IACR ePrint
-> 2024/710, *"BUFFing FALCON without Increasing the Signature Size"* (Düzlü, Fiedler, Fischlin).
-> Short URL: https://ia.cr/2024/710
+> **Paper references:** Three IACR ePrint papers are cited repeatedly by short identifier throughout
+> this document:
+> - **Paper 2024/1769** — *"A Closer Look at Falcon"* (Fouque, Gajland, de Groote, Janneck, Kiltz),
+>   EUROCRYPT 2026. Short URL: https://ia.cr/2024/1769
+> - **Paper 2024/1709** — *"Do Not Disturb a Sleeping Falcon"* (Lin, Tibouchi, Yu, Zhang),
+>   EUROCRYPT 2025. Short URL: https://ia.cr/2024/1709
+> - **Paper 2024/710** — *"BUFFing FALCON without Increasing the Signature Size"* (Düzlü, Fiedler,
+>   Fischlin). Short URL: https://ia.cr/2024/710
 
 ---
 
