@@ -38,7 +38,7 @@
   - ["Cross-machine floating-point determinism requires FPEMU"](#cross-machine-floating-point-determinism-requires-fpemu)
 - [Protocol Migration Implications](#protocol-migration-implications)
   - [Account Address Scheme](#account-address-scheme)
-  - [Verification Now Requires a State Read](#verification-now-requires-a-state-read)
+  - [Verification: Stateless vs Stateful Design](#verification-stateless-vs-stateful-design)
   - [Block Structure: Signature Storage](#block-structure-signature-storage)
   - [Archival Storage](#archival-storage)
   - [Multi-Signature Implications](#multi-signature-implications)
@@ -66,18 +66,42 @@ This document compares two post-quantum signature schemes:
 **The comparison covers security, protocol fit, practical migration implications, and open questions
 raised in community discussion.**
 
+Algorand's post-quantum strategy follows a three-part roadmap: securing the past (State Proofs
+using FALCON-DET1024, deployed in the "Renaissance Block" in 2022), securing the present (ledger
+account control — the focus of active development, with the first MainNet Falcon-authorized
+transaction demonstrated in November 2025), and securing the future (a post-quantum replacement
+for the VRF underlying Pure Proof-of-Stake — the hardest step, still under active research). The
+goal is a "crypto agile" account migration strategy: safe by default for new accounts, compatible
+with existing applications, and practical for users, wallets, custodians, and developers. This
+document focuses on the schemes relevant to the first two phases.
+
 ### Why PQ Migration Is Important
+
+At a high level, Algorand accounts are controlled in two ways: by a **secret** (a private key
+whose holder signs transactions — Single-sig and Multisig) or by a **program** (code logic that
+approves or initiates transactions — LogicSig and Applications). The PQ migration challenge
+splits along this line: secret-controlled accounts must migrate away from quantum-vulnerable
+signature schemes; program-controlled accounts must ensure their logic cannot be bypassed through
+an unintended secret-based path. Both are live concerns — they require different solutions.
 
 Several distinct forces motivate post-quantum migration:
 
 **1. Validator identity theft** — A CRQC running Shor's algorithm could break a validator's
 signing key and forge consensus votes without owning any stake — bypassing economic security
-entirely to enable double-spending, reorgs, or a de-facto 51% attack.
+entirely to enable double-spending, reorgs, or a de-facto 51% attack. For Algorand, this threat
+is substantially mitigated by the ephemeral key scheme: participation keys are deleted after use,
+so a CRQC cannot recover them retroactively to forge historical or future votes. The residual
+threat is a real-time CRQC capable of breaking Ed25519 within the active consensus round — a
+considerably narrower window than the general concern implies.
 
 **2. Store Now, Decrypt Later (SNDL)** — Adversaries are already recording block data and
 mempool traffic. Any Ed25519 public key visible on-chain today is a future target: once a CRQC
 exists, historical public keys can be used to extract private keys, enabling forgeries from
-accounts that appeared safe at registration time.
+accounts that appeared safe at registration time. For Algorand specifically, this threat is
+stronger than the standard SNDL framing: a single-signature account address directly encodes
+the Ed25519 public key without an additional hash layer — unlike Bitcoin or Ethereum where the
+public key remains hidden until the account's first spend. A CRQC can target any known Algorand
+address with no prior transaction history required.
 
 **3. Real-time mempool attacks** — If a CRQC were fast enough to break ECC within the mempool
 confirmation window, it could extract the sender's private key from a broadcast transaction and
@@ -85,12 +109,30 @@ front-run it before finalisation. This is the most speculative concern — it re
 capable, fast CRQC — but represents a genuine tail risk.
 
 **4. Avoiding emergency migration chaos** — Reactive migration under threat leads to rushed
-code, contested hard forks, and community splits. A proactive migration preserves the years
-needed for careful design, audit, and orderly ecosystem transition.
+code, contested hard forks, and community splits. Two failure modes are worth naming: doing
+nothing until a credible quantum threat appears risks a panic migration, where users rush to
+rekey simultaneously, compete for block space, and make operational mistakes under pressure;
+forcing a global migration too aggressively risks users losing access to accounts, funds,
+applications, or governance roles — harm potentially comparable to the attack the migration
+is meant to prevent. A proactive, gradual, opt-in migration preserves the years needed for
+careful design, audit, and orderly ecosystem transition.
 
 **5. Regulatory and institutional compliance** — NIST finalised FIPS 203/204/205 in August 2024.
 CISA and ENISA are mandating PQC migration timelines. Chains that lag will face compliance
 barriers with regulated institutional counterparties.
+
+**6. Program-controlled account bypass (Algorand-specific)** — Roughly half of all 32-byte
+Algorand addresses are mathematically valid Ed25519 public keys. For program-controlled accounts
+(LogicSig, Application, Multisig), a CRQC could derive the matching private key for such an
+address and bypass program logic entirely — even though no Ed25519 key was intentionally
+generated. This is not specific to the choice between FN-DSA and FALCON-DET1024; it affects
+any Falcon-based deployment on Algorand and requires per-account-type mitigations.
+
+**7. Grover's algorithm and hash security** — Grover's algorithm quadratically speeds up
+second-preimage search against hash-derived addresses (Multisig, LSig, Application). For
+Algorand's 32-byte SHA-512/256 output with domain separation, the security margin remains very
+large — this informs the address derivation design for native PQ accounts but does not drive
+the same urgency as Shor's on Ed25519.
 
 The timeline for CRQCs remains uncertain — most estimates place 10–20 years — but the practical
 guidance is: start migration engineering now, so the protocol is ready before the threat
@@ -412,9 +454,11 @@ parameter set. Whether that margin is acceptable is a security-policy judgement,
 
 ## Falcon-DET1024 Advantages
 
-- **Already deployed** — Algorand's state proof infrastructure has used FALCON-DET1024 in production
-  since 2022, and it is also exposed as an AVM opcode. Migration would require substantial testing and
-  validation effort across the full protocol stack.
+- **Already deployed** — FALCON-DET1024 has been in production in Algorand's state proof
+  infrastructure since 2022 ("Renaissance Block") and is exposed as an AVM opcode. In November
+  2025, Algorand demonstrated the first MainNet transaction authorized with Falcon signatures
+  via account abstraction — the first concrete step toward securing ledger accounts. Migration
+  of the full protocol stack would require substantial testing and validation effort.
 
 - **Determinism as convention** — Matches Ed25519 behaviour. Applications or tooling that
   incorrectly assumes byte-identical signatures would not break. The ABFT spec does not guarantee
@@ -672,50 +716,83 @@ consistency argument does not favour FALCON-DET1024's blanket emulation approach
 
 ## Protocol Migration Implications
 
-Migrating from Ed25519 to FN-DSA involves protocol-level changes beyond swapping the signature
-algorithm. Key considerations:
+Algorand's current migration path is built on FALCON-DET1024 (via account abstraction and state
+proofs) with native protocol Falcon accounts as the next step. The considerations below describe
+that landscape. FN-DSA is noted where it would offer a concrete improvement over the deterministic
+variant; otherwise the discussion applies equally to both Falcon variants.
 
 ### Account Address Scheme
 
-Ed25519's 32-byte public key IS the account address. FN-DSA's 1793-byte public key cannot serve
-this role directly. The address would need to be derived as a hash of the public key, following
-Algorand's existing domain-separation pattern:
+Ed25519's 32-byte public key IS the account address. A Falcon public key (1793 bytes for n=1024)
+cannot serve this role directly. The address must be derived as a hash of the public key,
+following Algorand's existing domain-separation pattern:
 
 ```
-address = H("PqAddr" || pubkey_bytes)
+address = H("PqAddr" || pubkey_bytes || salt)
 ```
+
+A deterministic salt is required to ensure the resulting address is off-curve — not
+interpretable as a valid Ed25519 public key, which would reintroduce the accidental key
+vulnerability. The salt must be selected by a protocol-defined deterministic rule (for example,
+the lowest integer value that produces an acceptable address), so that anyone who knows the
+Falcon public key can independently derive the canonical address. Without a canonical derivation
+rule, the same public key could correspond to multiple possible addresses, making the account
+model ambiguous for users, wallets, and validators.
 
 This is consistent with how Algorand already derives addresses for MultiSig accounts
 (`SHA512/256("MultisigAddr" || ...)`) and LogicSig accounts (`SHA512/256("Program" || bytecode)`).
+This design is also quantum-safe against Grover's algorithm: a 32-byte SHA-512/256 output with
+clear domain separation retains a very large security margin against targeted second-preimage
+attacks, which is the relevant quantum threat for hash-derived addresses.
 
 For a hybrid transition period, the address could commit to both keys:
 
 ```
-address = SHA512/256("HybridAddr" || ed25519_pubkey || fndsa_pubkey)
+address = SHA512/256("HybridAddr" || ed25519_pubkey || falcon_pubkey)
 ```
 
-This enables the dual-signature approach (requiring both Ed25519 and FN-DSA) during the transition,
-with the address unchanged regardless of which key is eventually retired.
+This enables the dual-signature approach (requiring both Ed25519 and Falcon signatures)
+during the transition, with the address unchanged regardless of which key is eventually retired.
 
-### Verification Now Requires a State Read
+### Verification: Stateless vs Stateful Design
 
-Ed25519 verification is pure computation — the address bytes ARE the public key. FN-DSA
-verification requires looking up the account's registered 1793-byte public key from on-chain state:
+Ed25519 verification is pure computation — the address bytes ARE the public key. A native Falcon
+account uses a hash-derived address, so the 1793-byte public key is not recoverable from the
+address alone. The verifier needs the key made available somehow. Two designs exist:
+
+**Stateless design** — each transaction carries the sender address, the Falcon public key, and
+the signature. The verifier checks that the public key derives the sender address, then verifies
+the signature. No ledger state lookup is required. Verification is fully parallelizable and
+independent of ledger state. The drawback is transaction size: carrying a 1793-byte public key
+on every transaction increases fees under a bytes-based fee model.
+
+**Stateful design** — the account record stores the Falcon public key after its first
+introduction. Subsequent transactions carry only the signature; the verifier looks up the public
+key from account state:
 
 ```
 address → state read → pubkey → verify(sig, pubkey, message) → valid/invalid
 ```
 
-This is a genuine protocol change with performance implications. Potential mitigations:
+This reduces transaction size after the first use. The drawback is that signature verification
+becomes dependent on a ledger read when the public key is omitted. The key can be implemented
+as soft state: if the account is closed, the public key can be re-supplied via a later stateless
+transaction. Potential mitigations for the state read overhead:
 - **Pre-fetching**: batch all state reads for a block's transactions in parallel before the
   verification pass.
-- **Key caching**: active accounts with stable FN-DSA keys have very high cache hit rates
+- **Key caching**: active accounts with stable Falcon keys have very high cache hit rates.
 
-The state read is one step removed from the current model but is a well-understood pattern.
+The stateless design is the simpler and more parallelizable path; the stateful design reduces
+per-transaction cost at the price of a ledger dependency. The choice has not been finalized for
+native Falcon protocol accounts. Both designs apply equally to FALCON-DET1024 and FN-DSA.
 
 ### Block Structure: Signature Storage
 
-FN-DSA signatures at 1280 bytes vs Ed25519 at 64 bytes represent a 20x increase per transaction.
+Falcon signatures represent roughly a 20x increase over Ed25519's 64 bytes. FALCON-DET1024
+uses variable-length compressed signatures averaging ~1268 bytes (max ~1423 bytes); FN-DSA uses
+a fixed padded format of exactly 1280 bytes. Both are in the same range for storage purposes,
+but FN-DSA's fixed size simplifies block capacity planning. A SegWit-style separation addresses
+both block capacity and long-term storage for either variant:
 A SegWit-style separation addresses both block capacity and long-term storage:
 
 ```
@@ -732,8 +809,8 @@ Block {
 Algorand already computes TxID from transaction fields only —
 `TxID = SHA-512/256("TX" || msgpack(tx_fields))` — with signatures carried separately in the
 `SignedTransaction` wrapper `{txn: Transaction, sig: Signature}`. TxID computation does not need
-to change for FN-DSA. What changes is the storage and transmission cost of the signature bytes
-themselves: 1280 bytes vs 64 bytes per transaction. The witness separation addresses that: after
+to change for either Falcon variant. What changes is the storage and transmission cost of the
+signature bytes themselves: ~1280 bytes vs 64 bytes per transaction. The witness separation addresses that: after
 Algorand's instant BA* finality, the witness section can be pruned by most nodes. The `sig_root`
 persists permanently as proof that all signatures were valid. Anyone needing to verify a historical
 signature requests it from an archival witness node along with a Merkle inclusion proof, verifies
@@ -746,11 +823,12 @@ exact tooling this requires — it is an extension of a pattern already built in
 ### Archival Storage
 
 Archival nodes that retain the full witness section face a 20x increase in signature storage:
-roughly 40 TB/year at 1,000 TPS vs ~2 TB/year today. FN-DSA-1024 signatures are a tightly
+roughly 40 TB/year at 1,000 TPS vs ~2 TB/year today. Falcon-1024 signatures are a tightly
 bit-packed encoding of a short lattice vector — cryptographically uniform bytes with no
-exploitable patterns. Generic compression produces larger output due to overhead, and converting
-to the native compressed format saves only ~8-13 bytes on average (the padded format is designed
-to be near the average compressed length). 1280 bytes is effectively the floor. Practical
+exploitable patterns. Generic compression produces larger output due to overhead. For
+FALCON-DET1024, converting padded to compressed format saves only ~8-13 bytes on average;
+for FN-DSA the 1280-byte padded format is already near the average compressed length. Either
+way, ~1280 bytes is effectively the floor. Practical
 mitigations:
 - **Time-bounded retention**: archival nodes could prune witness data beyond a threshold (e.g.,
   10 years) while `sig_root` persists forever
@@ -763,64 +841,111 @@ Algorand supports native M-of-N MultiSig accounts. The current implementation
 `Hash("MultisigAddr" || version || threshold || PK1 || ... || PKN)` — the N public keys are
 hashed into the address but not stored as permanent account state. They are supplied in full
 inside each spending transaction's `MultisigSig.Subsigs` array (revealed at spend time, not
-upfront). FN-DSA has no algebraic linearity equivalent to Ed25519, which has two practical
-consequences:
+upfront).
+
+Multisig accounts face two distinct quantum risks, which require separate solutions:
+
+- **Risk 1 — Accidental address**: the multisig address is hash-derived; if it decodes as a
+  valid Ed25519 public key, a CRQC could derive a matching private key and collapse the
+  threshold account into a single-key account. Addressable with the same salting or typing
+  strategy used for LSig and Application accounts.
+- **Risk 2 — Sub-signer exposure**: the multisig configuration embeds raw Ed25519 public keys
+  as sub-signers. Once visible on-chain (revealed at spend time), a CRQC can target each
+  individually. If enough are compromised to meet the threshold, the account is controlled via
+  the intended multisig path. This risk cannot be addressed by rekeying: sub-signers are raw
+  Ed25519 public keys, not accounts — rekeying applies to accounts, not to keys embedded in a
+  multisig template. Fully resolving Risk 2 requires a new multisig version, a program-based
+  multisig, or a new threshold-signature design using PQ primitives.
+
+Falcon has no algebraic linearity equivalent to Ed25519, which adds two engineering constraints
+for any native Falcon multisig:
 
 - **Per-transaction key payload multiplies**: each spending transaction must carry N public keys
-  inline (N × 1793 bytes with FN-DSA vs. N × 32 bytes today). This is not a new architectural
-  pattern — it is how Algorand's multisig already works — but the per-transaction cost grows
-  significantly with larger keys.
+  inline (N × 1793 bytes vs. N × 32 bytes today). This is not a new architectural pattern —
+  it is how Algorand's multisig already works — but the per-transaction cost grows significantly
+  with larger keys.
 - **No native aggregation**: unlike Schnorr-based schemes where M signatures can be aggregated
-  into one, each FN-DSA co-signer contributes a separate 1280-byte signature. An M-of-N
-  threshold produces M independent signatures, all of which must be included and verified.
-  The implementation caps N at 255 (`maxMultisig = 255`).
+  into one, each co-signer contributes a separate ~1280-byte signature. An M-of-N threshold
+  produces M independent signatures, all of which must be included and verified. The
+  implementation caps N at 255 (`maxMultisig = 255`).
 
 These are engineering constraints, not security problems — MultiSig still works, it just
 occupies significantly more per-transaction space and requires M separate verification calls.
 SNARK aggregation of the M verification proofs into a single proof for block-level processing
-is the most promising longer-term mitigation.
+is the most promising longer-term mitigation. For existing multisig accounts, preserving the
+same address, threshold policy, and native semantics requires active owner coordination and
+new PQ multisig support — it cannot be achieved by protocol migration alone.
 
 ### Migration Path and Hybrid Period
 
 Algorand's existing Ed25519 accounts cannot be migrated atomically — there is no mechanism to
-force all existing key holders to re-key simultaneously. A realistic migration path requires a
-hybrid period:
+force all existing key holders to re-key simultaneously. A complicating factor is that Algorand
+addresses are not self-describing: the ledger only learns an account's control type (single-sig,
+multisig, LogicSig, application) when the account first performs a valid action. Before that,
+the address alone gives no indication of how it is controlled. This means a single protocol rule
+cannot cleanly cover all account types at once — migration strategy must differ by account type,
+and must handle already-existing accounts, unfunded accounts, and addresses computed before their
+corresponding application exists. A realistic migration path requires a hybrid period:
 
-1. **Dual-key accounts**: allow accounts to register a FN-DSA public key alongside their
-   existing Ed25519 key. The address is derived from a commitment to both:
-   `SHA512/256("HybridAddr" || ed25519_pk || fndsa_pk)`. Both signatures are required
-   simultaneously — transactions must carry both an Ed25519 and a FN-DSA signature. This
-   protects against either scheme failing independently: if Falcon is broken classically before
-   any quantum threat materialises, the Ed25519 requirement still holds; if a quantum threat
-   arrives before migration is complete, the Falcon requirement already provides protection.
-   This is the pattern already described in the Account Address Scheme section.
+1. **Single-sig account migration via rekeying**: Algorand's rekeying feature separates an
+   account's public address from its current authorizer. A user migrating to Falcon can keep
+   the same address while changing the authorizer: create a Falcon-controlled LSig account
+   with off-curve address, then rekey the existing Ed25519 account to that Falcon authorizer.
+   For a native Falcon protocol account, the longer-term design registers a Falcon public key
+   alongside the existing Ed25519 key, with an address committed to both:
+   `SHA512/256("HybridAddr" || ed25519_pk || falcon_pk)`, and both signatures required
+   simultaneously — protecting against either scheme failing independently. The current Falcon
+   account abstraction requires a 4-transaction group rather than a single transaction due to
+   the pooled bytes budget for LSig program and arguments; resolving this friction requires
+   either a protocol upgrade to increase LSig size limits or native Falcon account support.
 
 2. **Deprecation window**: announce a future block height after which Ed25519-only signatures
-   will no longer be accepted for new transactions. Accounts that have not registered a FN-DSA
+   will no longer be accepted for new transactions. Accounts that have not registered a Falcon
    key by that block height would need to migrate before spending.
 
-3. **Quantum-vulnerable account handling**: accounts that never registered a FN-DSA key and
+3. **Logic Signature account hardening**: Because LSig addresses are derived from program
+   bytecode, a harmless salt can be added until the address is off-curve — no protocol upgrade
+   required. This is already used in the LSig-based Falcon account abstraction; the long-term
+   goal is for the assembler to search for an off-curve address automatically as the default.
+
+4. **Application account hardening**: Application account addresses are derived from the
+   Application ID (a protocol counter), not from program code, so the LSig salting approach
+   does not apply. Two protocol-level options are under consideration: salting the address
+   derivation at creation time, or recording account type in the ledger to reject Ed25519
+   signatures for known application-controlled addresses. Neither is finalized; both require
+   protocol changes.
+
+5. **Quantum-vulnerable account handling**: accounts that never registered a Falcon key and
    whose Ed25519 private key may be at quantum risk represent the hardest migration challenge.
    This is an unsolved problem common to all blockchain PQC migrations — there is no safe way
    to migrate an account whose private key is unknown or inaccessible.
 
+One concrete mechanism that avoids both the panic migration and forced lockout failure modes is
+**lazy migration**: accounts can pre-declare a post-quantum fallback authorizer while continuing
+normal operation. If the network later needs to disable a vulnerable authorization path, the
+protocol switches only opted-in accounts to their pre-declared PQ authorizer. This gives users
+time to prepare before urgency arrives, and avoids imposing a one-size-fits-all migration on
+accounts with complex custody, governance, or application dependencies.
+
 The engineering work for the hybrid period is the critical path. Starting now allows Algorand to
-have the infrastructure ready before any quantum threat becomes concrete.
+have the infrastructure ready before any quantum threat becomes concrete. Beyond protocol work,
+broader adoption depends on wallets, custody providers, exchanges, and developer tooling
+supporting PQ key generation, storage, signing, and recovery — the ecosystem coordination
+problem is at least as large as the protocol engineering problem.
 
 ### Batch Verification Loss
 
 Ed25519 supports batch verification — verifying N signatures together via a single multi-scalar
-multiplication is faster than N individual verifications. FN-DSA has no equivalent. Each signature
-must be verified independently. The throughput impact is partially self-offsetting: the 20x
-signature size increase reduces the number of transactions that fit in a block, meaning fewer
-total verification operations per block even without batching. Mitigations:
-- **Parallel verification**: FN-DSA verifications are fully independent and parallelise trivially
-  across CPU cores. Algorand's ledger evaluation already implements this pattern: `eval.go` runs
-  signature verification in a dedicated goroutine (`go txvalidator.run()`) concurrent with
-  transaction state evaluation, using an `execpool.BacklogPool` to parallelise across the full
-  block payset via `verify.PaysetGroups`. FN-DSA would slot into this existing infrastructure
-  without architectural changes — the parallelism already exists; only the per-signature
-  verification function changes.
+multiplication is faster than N individual verifications. Falcon has no equivalent; each
+signature must be verified independently. The throughput impact is partially self-offsetting:
+the ~20x signature size increase reduces the number of transactions that fit in a block, meaning
+fewer total verification operations per block even without batching. Mitigations:
+- **Parallel verification**: Falcon verifications are fully independent and parallelise trivially
+  across CPU cores. Algorand's ledger evaluation already implements this pattern — signature
+  verification runs concurrently with transaction state evaluation, parallelised across the full
+  block payset using a goroutine pool. Any native Falcon scheme slots into this existing
+  infrastructure without architectural changes; the parallelism already exists and only the
+  per-signature verification function changes.
 - **SNARK aggregation** (longer-term): a block producer verifies all FN-DSA signatures and
   generates a single SNARK proof attesting their validity. Validators verify one proof instead of
   N signatures, making per-transaction verification overhead essentially zero. Active research area;
@@ -1022,7 +1147,7 @@ FPEMU should also be consistently enforced.
 
 **Acknowledgement — Peikert and Pornin both consulted:**
 
-The paper's acknowledgements state: *"We would like to thank Chris Peikert and Thomas Pornin for
+Paper 2024/1709's acknowledgements state: *"We would like to thank Chris Peikert and Thomas Pornin for
 useful comments and discussions on a previous version of this paper."* Both the co-designer of
 FALCON-DET1024 (Peikert) and Falcon's principal author and `rust-fn-dsa` implementor (Pornin)
 are aware of the paper's findings.
@@ -1140,6 +1265,9 @@ longer-term options beyond the FN-DSA vs FALCON-DET1024 comparison in this docum
   https://falcon-sign.info
 - Lazar, Peikert — *Deterministic Falcon-1024*, `falcon-det.pdf`, Algorand Inc., November 2021:
   https://github.com/algorand/falcon/blob/main/falcon-det.pdf
+- Algorand Foundation — *Algorand Post-Quantum Ledger: Securing the ledger, one account type
+  at a time*, May 2026.
+  https://algorand.co/blog/algorand-post-quantum-ledger
 - Pornin — `rust-fn-dsa` (2025): https://github.com/pornin/rust-fn-dsa
 - Pornin — RFC 6979, *Deterministic Usage of DSA and ECDSA*, 2013
 - NIST — *FIPS 204: Module-Lattice-Based Digital Signature Standard (ML-DSA)*, August 2024.
