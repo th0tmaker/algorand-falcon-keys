@@ -20,7 +20,7 @@
 ## Table of Contents
 
 - [Context](#context)
-  - [Why PQ Migration Is Important — The HNDL Threat](#why-pq-migration-is-important--the-hndl-threat)
+  - [Why PQ Migration Is Important](#why-pq-migration-is-important)
 - [Shared Foundation](#shared-foundation)
 - [Parameter Set: 512 vs 1024](#parameter-set-512-vs-1024)
 - [FN-DSA Advantages](#fn-dsa-advantages)
