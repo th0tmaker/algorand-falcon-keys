@@ -66,21 +66,35 @@ This document compares two post-quantum signature schemes:
 **The comparison covers security, protocol fit, practical migration implications, and open questions
 raised in community discussion.**
 
-### Why PQ Migration Is Important — The HNDL Threat
+### Why PQ Migration Is Important
 
-The motivation for post-quantum migration is the **Harvest Now, Decrypt Later (HNDL)** attack:
-adversaries with sufficient storage are already collecting encrypted traffic and signed data
-today, intending to break it once a cryptographically-relevant quantum computer (CRQC) exists.
-For encryption, this creates immediate urgency — data encrypted today under RSA or ECC could be
-decrypted years from now. For signatures, the exposure is different but still real: long-lived
-account keys or signing keys registered today could be targeted if a CRQC ever allows key
-extraction from public keys or observed signatures.
+Several distinct forces motivate post-quantum migration:
 
-The timeline for CRQCs remains uncertain. Most estimates place a cryptographically capable
-machine 10–20 years away, but the uncertainty cuts both ways — it could arrive sooner, and
-migration of a live blockchain is a multi-year process. The practical guidance is: start the
-migration engineering work now, so the protocol is ready before the threat materialises rather
-than in response to it.
+**1. Validator identity theft** — A CRQC running Shor's algorithm could break a validator's
+signing key and forge consensus votes without owning any stake — bypassing economic security
+entirely to enable double-spending, reorgs, or a de-facto 51% attack.
+
+**2. Store Now, Decrypt Later (SNDL)** — Adversaries are already recording block data and
+mempool traffic. Any Ed25519 public key visible on-chain today is a future target: once a CRQC
+exists, historical public keys can be used to extract private keys, enabling forgeries from
+accounts that appeared safe at registration time.
+
+**3. Real-time mempool attacks** — If a CRQC were fast enough to break ECC within the mempool
+confirmation window, it could extract the sender's private key from a broadcast transaction and
+front-run it before finalisation. This is the most speculative concern — it requires a very
+capable, fast CRQC — but represents a genuine tail risk.
+
+**4. Avoiding emergency migration chaos** — Reactive migration under threat leads to rushed
+code, contested hard forks, and community splits. A proactive migration preserves the years
+needed for careful design, audit, and orderly ecosystem transition.
+
+**5. Regulatory and institutional compliance** — NIST finalised FIPS 203/204/205 in August 2024.
+CISA and ENISA are mandating PQC migration timelines. Chains that lag will face compliance
+barriers with regulated institutional counterparties.
+
+The timeline for CRQCs remains uncertain — most estimates place 10–20 years — but the practical
+guidance is: start migration engineering now, so the protocol is ready before the threat
+materialises.
 
 > [!NOTE]
 >
@@ -431,7 +445,7 @@ parameter set. Whether that margin is acceptable is a security-policy judgement,
     determinism. With FN-DSA, all salts must be included in the aggregated proof, forcing linear
     scaling. Determinism eliminates the salt overhead and enables sublinear aggregation.
 
-- **SNARK friendliness for compact certificates — the primary stated motivation** — The
+- **SNARK friendliness for [compact certificates](https://ia.cr/2020/1568) — the primary stated motivation** — The
   `falcon-det.pdf` spec is explicit that this is the core reason for choosing derandomization over
   randomized hashing. With a random salt, the digest syndrome depends on the salt in the signature.
   For compact certificates where many signers sign the same message, the SNARK must embed
@@ -1095,6 +1109,9 @@ longer-term options beyond the FN-DSA vs FALCON-DET1024 comparison in this docum
 
 - Algorand ABFT Specification, Section 3 — Identity, Authorization, and Authentication (release 7791a63):
   https://github.com/algorandfoundation/specs/releases/tag/7791a63
+- Micali, Reyzin, Vlachos, Wahby, Zeldovich — *Compact Certificates of Collective Knowledge*,
+  IACR ePrint 2020/1568.
+  Short URL: https://ia.cr/2020/1568
 - Fouque (Université de Rennes, IUF), Gajland (IBM Research Zurich), de Groote (ENS Paris-Saclay),
   Janneck (Ruhr University Bochum), Kiltz (Ruhr University Bochum) —
   *A Closer Look at Falcon*, in *Advances in Cryptology – EUROCRYPT 2026*, Lecture Notes in
