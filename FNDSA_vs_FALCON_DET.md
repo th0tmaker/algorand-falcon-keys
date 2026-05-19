@@ -86,29 +86,21 @@ an unintended secret-based path. Both are live concerns — they require differe
 
 Several distinct forces motivate post-quantum migration:
 
-**1. Validator identity theft** — A CRQC running Shor's algorithm could break a validator's
-signing key and forge consensus votes without owning any stake — bypassing economic security
-entirely to enable double-spending, reorgs, or a de-facto 51% attack. For Algorand, this threat
-is substantially mitigated by the ephemeral key scheme: participation keys are deleted after use,
-so a CRQC cannot recover them retroactively to forge historical or future votes. The residual
-threat is a real-time CRQC capable of breaking Ed25519 within the active consensus round — a
-considerably narrower window than the general concern implies.
-
-**2. Store Now, Decrypt Later (SNDL)** — Adversaries are already recording block data and
+**1. Store Now, Decrypt Later (SNDL)** — Adversaries are already recording block data and
 mempool traffic. Any Ed25519 public key visible on-chain today is a future target: once a CRQC
-exists, historical public keys can be used to extract private keys, enabling forgeries from
+(Cryptographically Relevant Quantum Computer) exists, historical public keys can be used to extract private keys, enabling forgeries from
 accounts that appeared safe at registration time. For Algorand specifically, this threat is
 stronger than the standard SNDL framing: a single-signature account address directly encodes
 the Ed25519 public key without an additional hash layer — unlike Bitcoin or Ethereum where the
 public key remains hidden until the account's first spend. A CRQC can target any known Algorand
 address with no prior transaction history required.
 
-**3. Real-time mempool attacks** — If a CRQC were fast enough to break ECC within the mempool
+**2. Real-time mempool attacks** — If a CRQC were fast enough to break ECC within the mempool
 confirmation window, it could extract the sender's private key from a broadcast transaction and
 front-run it before finalisation. This is the most speculative concern — it requires a very
 capable, fast CRQC — but represents a genuine tail risk.
 
-**4. Avoiding emergency migration chaos** — Reactive migration under threat leads to rushed
+**3. Avoiding emergency migration chaos** — Reactive migration under threat leads to rushed
 code, contested hard forks, and community splits. Two failure modes are worth naming: doing
 nothing until a credible quantum threat appears risks a panic migration, where users rush to
 rekey simultaneously, compete for block space, and make operational mistakes under pressure;
@@ -117,18 +109,18 @@ applications, or governance roles — harm potentially comparable to the attack 
 is meant to prevent. A proactive, gradual, opt-in migration preserves the years needed for
 careful design, audit, and orderly ecosystem transition.
 
-**5. Regulatory and institutional compliance** — NIST finalised FIPS 203/204/205 in August 2024.
+**4. Regulatory and institutional compliance** — NIST finalised FIPS 203/204/205 in August 2024.
 CISA and ENISA are mandating PQC migration timelines. Chains that lag will face compliance
 barriers with regulated institutional counterparties.
 
-**6. Program-controlled account bypass (Algorand-specific)** — Roughly half of all 32-byte
+**5. Program-controlled account bypass (Algorand-specific)** — Roughly half of all 32-byte
 Algorand addresses are mathematically valid Ed25519 public keys. For program-controlled accounts
 (LogicSig, Application, Multisig), a CRQC could derive the matching private key for such an
 address and bypass program logic entirely — even though no Ed25519 key was intentionally
 generated. This is not specific to the choice between FN-DSA and FALCON-DET1024; it affects
 any Falcon-based deployment on Algorand and requires per-account-type mitigations.
 
-**7. Grover's algorithm and hash security** — Grover's algorithm quadratically speeds up
+**6. Grover's algorithm and hash security** — Grover's algorithm quadratically speeds up
 second-preimage search against hash-derived addresses (Multisig, LSig, Application). For
 Algorand's 32-byte SHA-512/256 output with domain separation, the security margin remains very
 large — this informs the address derivation design for native PQ accounts but does not drive
@@ -136,7 +128,10 @@ the same urgency as Shor's on Ed25519.
 
 The timeline for CRQCs remains uncertain — most estimates place 10–20 years — but the practical
 guidance is: start migration engineering now, so the protocol is ready before the threat
-materialises.
+materialises. Note on consensus: Algorand's ephemeral participation key scheme already limits
+the quantum threat to consensus to real-time forgery within an active round — a narrow window
+given the 80% honest-stake safety guarantee. The primary exposure is at the account layer
+(spending keys), not the consensus layer.
 
 > [!NOTE]
 >
