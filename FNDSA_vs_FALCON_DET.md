@@ -758,22 +758,27 @@ mitigations:
 
 ### Multi-Signature Implications
 
-Algorand supports native M-of-N MultiSig accounts. The current Ed25519 implementation benefits
-from linear algebraic structure — verification is straightforward polynomial arithmetic over the
-same field. FN-DSA has no analogous algebraic linearity, which has two practical consequences:
+Algorand supports native M-of-N MultiSig accounts. The current implementation
+(`multisig.go`) derives the multisig address as:
+`Hash("MultisigAddr" || version || threshold || PK1 || ... || PKN)` — the N public keys are
+hashed into the address but not stored as permanent account state. They are supplied in full
+inside each spending transaction's `MultisigSig.Subsigs` array (revealed at spend time, not
+upfront). FN-DSA has no algebraic linearity equivalent to Ed25519, which has two practical
+consequences:
 
-- **Key and signature sizes multiply**: an M-of-N MultiSig with FN-DSA requires storing N
-  public keys (N × 1793 bytes) on-chain as part of the account configuration, vs. N × 32 bytes
-  today. For large committees this is a meaningful on-chain storage increase.
+- **Per-transaction key payload multiplies**: each spending transaction must carry N public keys
+  inline (N × 1793 bytes with FN-DSA vs. N × 32 bytes today). This is not a new architectural
+  pattern — it is how Algorand's multisig already works — but the per-transaction cost grows
+  significantly with larger keys.
 - **No native aggregation**: unlike Schnorr-based schemes where M signatures can be aggregated
   into one, each FN-DSA co-signer contributes a separate 1280-byte signature. An M-of-N
   threshold produces M independent signatures, all of which must be included and verified.
+  The implementation caps N at 255 (`maxMultisig = 255`).
 
 These are engineering constraints, not security problems — MultiSig still works, it just
-occupies more space and requires M separate verification calls. Mitigation paths include
-on-chain storage of a hash of the MultiSig public key set (with the full key set supplied at
-spend time) and SNARK aggregation of the M verification proofs into a single proof for
-block-level processing.
+occupies significantly more per-transaction space and requires M separate verification calls.
+SNARK aggregation of the M verification proofs into a single proof for block-level processing
+is the most promising longer-term mitigation.
 
 ### Migration Path and Hybrid Period
 
@@ -783,8 +788,12 @@ hybrid period:
 
 1. **Dual-key accounts**: allow accounts to register a FN-DSA public key alongside their
    existing Ed25519 key. The address is derived from a commitment to both:
-   `SHA512/256("HybridAddr" || ed25519_pk || fndsa_pk)`. Both keys can sign; validators accept
-   either. This is the pattern already described in the Account Address Scheme section.
+   `SHA512/256("HybridAddr" || ed25519_pk || fndsa_pk)`. Both signatures are required
+   simultaneously — transactions must carry both an Ed25519 and a FN-DSA signature. This
+   protects against either scheme failing independently: if Falcon is broken classically before
+   any quantum threat materialises, the Ed25519 requirement still holds; if a quantum threat
+   arrives before migration is complete, the Falcon requirement already provides protection.
+   This is the pattern already described in the Account Address Scheme section.
 
 2. **Deprecation window**: announce a future block height after which Ed25519-only signatures
    will no longer be accepted for new transactions. Accounts that have not registered a FN-DSA
@@ -802,9 +811,16 @@ have the infrastructure ready before any quantum threat becomes concrete.
 
 Ed25519 supports batch verification — verifying N signatures together via a single multi-scalar
 multiplication is faster than N individual verifications. FN-DSA has no equivalent. Each signature
-must be verified independently. Mitigations:
+must be verified independently. The throughput impact is partially self-offsetting: the 20x
+signature size increase reduces the number of transactions that fit in a block, meaning fewer
+total verification operations per block even without batching. Mitigations:
 - **Parallel verification**: FN-DSA verifications are fully independent and parallelise trivially
-  across CPU cores.
+  across CPU cores. Algorand's ledger evaluation already implements this pattern: `eval.go` runs
+  signature verification in a dedicated goroutine (`go txvalidator.run()`) concurrent with
+  transaction state evaluation, using an `execpool.BacklogPool` to parallelise across the full
+  block payset via `verify.PaysetGroups`. FN-DSA would slot into this existing infrastructure
+  without architectural changes — the parallelism already exists; only the per-signature
+  verification function changes.
 - **SNARK aggregation** (longer-term): a block producer verifies all FN-DSA signatures and
   generates a single SNARK proof attesting their validity. Validators verify one proof instead of
   N signatures, making per-transaction verification overhead essentially zero. Active research area;
