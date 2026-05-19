@@ -17,6 +17,41 @@
 > cited and to treat any conclusions as starting points for further investigation, not settled
 > facts.
 
+## Table of Contents
+
+- [Context](#context)
+  - [Why PQ Migration Is Important — The HNDL Threat](#why-pq-migration-is-important--the-hndl-threat)
+- [Shared Foundation](#shared-foundation)
+- [Parameter Set: 512 vs 1024](#parameter-set-512-vs-1024)
+- [FN-DSA Advantages](#fn-dsa-advantages)
+  - [Security](#security)
+  - [Signature Format](#signature-format)
+  - [Implementation](#implementation)
+  - [Protocol and Ecosystem](#protocol-and-ecosystem)
+- [Falcon-DET1024 Advantages](#falcon-det1024-advantages)
+- [Arguments Examined and Resolved](#arguments-examined-and-resolved)
+  - ["Different machines might produce different signatures"](#different-machines-might-produce-different-signatures)
+  - ["FN-DSA requires a good source of randomness"](#fn-dsa-requires-a-good-source-of-randomness-which-signers-didnt-need-before)
+  - ["The blockchain industry doesn't always follow NIST"](#the-blockchain-industry-doesnt-always-follow-nist)
+  - ["We have a tried and trusted implementation in production for years"](#we-have-a-tried-and-trusted-implementation-in-production-for-years)
+  - ["FN-DSA's non-determinism is a computation problem"](#fn-dsas-non-determinism-is-a-computation-problem-not-just-an-output-difference)
+  - ["Cross-machine floating-point determinism requires FPEMU"](#cross-machine-floating-point-determinism-requires-fpemu)
+- [Protocol Migration Implications](#protocol-migration-implications)
+  - [Account Address Scheme](#account-address-scheme)
+  - [Verification Now Requires a State Read](#verification-now-requires-a-state-read)
+  - [Block Structure: Signature Storage](#block-structure-signature-storage)
+  - [Archival Storage](#archival-storage)
+  - [Multi-Signature Implications](#multi-signature-implications)
+  - [Migration Path and Hybrid Period](#migration-path-and-hybrid-period)
+  - [Batch Verification Loss](#batch-verification-loss)
+- [Use-Case Differentiated View](#use-case-differentiated-view)
+- [The "Do Not Disturb a Sleeping Falcon" Attack](#the-do-not-disturb-a-sleeping-falcon-attack)
+- [Key Gaps in Falcon-DET1024](#key-gaps-in-falcon-det1024)
+- [Verdict](#verdict)
+- [References](#references)
+
+---
+
 ## Context
 
 This document compares two post-quantum signature schemes:
@@ -31,7 +66,7 @@ This document compares two post-quantum signature schemes:
 **The comparison covers security, protocol fit, practical migration implications, and open questions
 raised in community discussion.**
 
-### Why This Migration Is Urgent — The HNDL Threat
+### Why PQ Migration Is Important — The HNDL Threat
 
 The motivation for post-quantum migration is the **Harvest Now, Decrypt Later (HNDL)** attack:
 adversaries with sufficient storage are already collecting encrypted traffic and signed data
