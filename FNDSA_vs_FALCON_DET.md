@@ -831,12 +831,10 @@ mitigations:
 
 ### Multi-Signature Implications
 
-Algorand supports native M-of-N MultiSig accounts. The current implementation
-(`multisig.go`) derives the multisig address as:
-`Hash("MultisigAddr" || version || threshold || PK1 || ... || PKN)` — the N public keys are
-hashed into the address but not stored as permanent account state. They are supplied in full
-inside each spending transaction's `MultisigSig.Subsigs` array (revealed at spend time, not
-upfront).
+Algorand supports native M-of-N MultiSig accounts. The multisig address is derived by hashing
+a domain separator together with the version, threshold, and the N participating public keys —
+those keys are baked into the address but not stored as permanent account state. Instead, they
+are supplied in full inside each spending transaction at the time of spending, not upfront.
 
 Multisig accounts face two distinct quantum risks, which require separate solutions:
 
