@@ -53,6 +53,29 @@
 
 ---
 
+> [!NOTE]
+>
+> **On the word "determinism":** Three related but distinct notions appear in this document.
+>
+> *Signing determinism* means the same private key and message always produce the same signature
+> bytes — FALCON-DET1024's defining property. Achieving it requires two computational preconditions:
+>
+> - **Deterministic random tape**: the PRF `SHAKE(logn‖privkey‖data)` ensures the same
+>   pseudorandom byte stream is generated on every signing call for the same key and message.
+> - **Functional equivalence**: the signing algorithm that consumes those bytes must have the same
+>   input-output behaviour across different hardware and compiler configurations — this is the
+>   floating-point emulation (`FALCON_FPEMU`) concern.
+>
+> The spec (Section 3.4.2) states explicitly: *"it is not enough to generate a repeatable stream of
+> pseudorandom bytes; the actual signing procedures that consume those bytes should ideally be
+> functionally equivalent."* A repeatable tape without functional equivalence is insufficient.
+>
+> The spec also includes a `salt_version_byte` as an escape hatch: when functional equivalence
+> breaks — due to a bug fix, optimisation, or platform change — incrementing the version refreshes
+> the message-to-syndrome mapping without requiring key replacement.
+>
+> Unless stated otherwise, "determinism" in this document refers to signing determinism.
+
 ## Context
 
 This document compares two post-quantum signature schemes:
@@ -74,23 +97,28 @@ Block" in 2022, provide a quantum-safe record of Algorand's chain history. This 
 complete.
 
 **Securing the present — two open questions.** The first MainNet Falcon-authorized transaction
-was demonstrated in November 2025, but two architectural questions remain unsettled. First:
-how to structure crypto agility for transaction signing. An opcode wrapped in a LogicSig
-abstraction is the flexible path — scheme-agnostic, deployable without protocol changes, and
-useful for observing which PQ schemes developers actually adopt and how they perform under
-real AVM constraints. A native protocol-level account type is the canonical path — full
-feature parity with Ed25519, no ARC dependency, familiar patterns for wallets and tooling,
-and protocol-enforced security guarantees without relying on ecosystem convention. These two
-paths are not mutually exclusive: the opcode layer provides agility and experimentation while
-the native account type provides the stable ecosystem-wide standard. Both can coexist, serving
-different use cases and migration timelines simultaneously. Second: which scheme to promote
-to native status, and when. FALCON-DET1024 is the most natural near-term candidate — several
-years in production, already an AVM opcode, and a performance profile (low latency, high
-throughput) that fits Algorand's design constraints. The theoretical advantages FN-DSA holds
-over FALCON-DET1024 — formal security proof, public key binding, BUFF properties — are either
-not meaningful in Algorand's specific deployment context or unlikely to be exploited in
-practice. That, combined with the significant implementation cost of introducing FN-DSA
-from scratch against an already deployed and tested scheme, makes the case for choosing 
+was demonstrated in November 2025, but two architectural questions remain unsettled.
+
+1. How to be crypto-agile when it comes to transaction signing?
+
+- An opcode wrapped in a LogicSig abstraction is the flexible path — scheme-agnostic,
+deployable without protocol changes, and useful for observing which PQ schemes developers
+actually adopt and how they perform under real AVM constraints. A native protocol-level
+account type is the canonical path — full feature parity with Ed25519, no ARC dependency,
+familiar patterns for wallets and tooling, and protocol-enforced security guarantees without
+relying on ecosystem convention. These two paths are not mutually exclusive: the opcode layer
+provides agility and experimentation while the native account type provides the stable
+ecosystem-wide standard. Both can coexist, serving different use cases and migration timelines
+simultaneously.
+
+2. Which scheme to promote to native status, and when?
+
+- FALCON-DET1024 is the most natural near-term candidate — several years in production,
+already an AVM opcode, and a performance profile (low latency, high throughput) that fits
+Algorand's design constraints. The theoretical advantages FN-DSA holds over FALCON-DET1024
+are either not meaningful in Algorand's specific deployment context or unlikely to be
+exploited in practice. That (combined with the significant implementation cost of introducing
+FN-DSA from scratch against an already deployed and tested scheme) makes the case for choosing 
 FN-DSA over FALCON-DET1024 as the first native PQ account type a difficult one to argue.
 
 **Securing the future — two timelines.** Algorand's Pure Proof-of-Stake consensus selects
@@ -174,29 +202,6 @@ materialises. Note on consensus: Algorand's ephemeral participation key scheme a
 the quantum threat to consensus to real-time forgery within an active round — a narrow window
 given the 80% honest-stake safety guarantee. The primary exposure is at the account layer
 (spending keys), not the consensus layer.
-
-> [!NOTE]
->
-> **On the word "determinism":** Three related but distinct notions appear in this document.
->
-> *Signing determinism* means the same private key and message always produce the same signature
-> bytes — FALCON-DET1024's defining property. Achieving it requires two computational preconditions:
->
-> - **Deterministic random tape**: the PRF `SHAKE(logn‖privkey‖data)` ensures the same
->   pseudorandom byte stream is generated on every signing call for the same key and message.
-> - **Functional equivalence**: the signing algorithm that consumes those bytes must have the same
->   input-output behaviour across different hardware and compiler configurations — this is the
->   floating-point emulation (`FALCON_FPEMU`) concern.
->
-> The spec (Section 3.4.2) states explicitly: *"it is not enough to generate a repeatable stream of
-> pseudorandom bytes; the actual signing procedures that consume those bytes should ideally be
-> functionally equivalent."* A repeatable tape without functional equivalence is insufficient.
->
-> The spec also includes a `salt_version_byte` as an escape hatch: when functional equivalence
-> breaks — due to a bug fix, optimisation, or platform change — incrementing the version refreshes
-> the message-to-syndrome mapping without requiring key replacement.
->
-> Unless stated otherwise, "determinism" in this document refers to signing determinism.
 
 ---
 
@@ -336,16 +341,14 @@ enters the picture.
   The Do Not Disturb attack is exactly this — it ignores the ~279-bit hardness completely and
   exploits a floating-point property unique to deterministic signing.
 
-- **Public key binding** — FN-DSA incorporates a hash of the public key into every signature:
-  `H(hpk, r, m)` instead of `H(r, m)`. Without binding, multi-user security degrades by
-  approximately log₂(N) bits where N is the number of accounts — roughly 20 bits for Algorand's
-  scale. With binding, each account's security is evaluated independently at full strength. This is
-  the Pornin-Stern transformation [PS05], known since 2005 and described as "standard
-  cryptographic practice" and "good cryptographic engineering" in the Paper 2024/1769.
-
-- **BUFF security (Beyond UnForgeability Features)** — FN-DSA achieves three additional security
-  properties on top of standard unforgeability, formalised in Paper 2020/1525 and shown to follow
-  from pk binding for FALCON by Paper 2024/710 (Düzlü, Fiedler, Fischlin):
+- **Public key binding and BUFF security** — FN-DSA incorporates a hash of the public key into
+  every signature: `H(hpk, r, m)` instead of `H(r, m)`. Without binding, multi-user security
+  degrades by approximately log₂(N) bits where N is the number of accounts — roughly 20 bits for
+  Algorand's scale. With binding, each account's security is evaluated independently at full
+  strength. This is the Pornin-Stern transformation [PS05], known since 2005. pk binding is also
+  the mechanism that delivers BUFF security (Beyond UnForgeability Features), formalised in Paper
+  2020/1525 and shown to follow from pk binding for FALCON by Paper 2024/710 (Düzlü, Fiedler,
+  Fischlin). The three resulting properties are:
   - *Exclusive ownership (M-S-UEO)*: a valid signature cannot verify under two distinct public keys —
     a signature is cryptographically bound to the key it was produced under
   - *Message-bound signatures (MBS)*: a valid signature cannot verify two different messages under
@@ -367,11 +370,10 @@ enters the picture.
 
   In Algorand's current design the EO gap is partially mitigated by the address scheme. With
   Ed25519, the 32-byte public key IS the address — "only key X could produce this signature"
-  holds both mathematically (Ed25519 has native EO) and at the protocol level. A FN-DSA
+  holds both mathematically (Ed25519 has native EO) and at the protocol level. A PQ scheme
   migration would hash the 1793-byte public key to derive a 32-byte address
   `H("PqAddr" || pubkey_bytes)`, and verification uses the key registered for that
-  address — so the address-to-key binding still enforces which key is checked. FALCON-DET1024
-  benefits from the same protocol-level mitigation.
+  address — so the address-to-key binding still enforces which key is checked.
 
   The meaningful difference is what happens *outside* that infrastructure. FN-DSA's
   `H(r, pk, m)` makes the signature mathematically inseparable from the specific key — a
@@ -383,15 +385,13 @@ enters the picture.
 
 ### Signature Format
 
-- **Fixed-size signatures** — FN-DSA/1024 produces exactly 1280-byte signatures, matching the
-  `FALCON_SIG_PADDED_SIZE` defined in the Falcon specification. This padded format works
-  reliably because rejections due to oversized compressed signatures can trigger a fresh nonce,
-  allowing a retry. FALCON-DET1024 cannot retry and so must accept variable-length compressed
-  signatures (up to 1423 bytes max).
-
-- **Fixed size simplifies everything downstream** — buffer allocation, network framing, storage
-  calculations, and block capacity planning all become deterministic when every signature is exactly
-  1280 bytes.
+- **Smaller fixed-size signatures** — FN-DSA/1024 produces exactly 1280-byte signatures. The padded
+  format works reliably because rejections due to oversized compressed signatures can trigger a
+  fresh nonce, allowing a retry — something FALCON-DET1024 cannot do, leaving it with
+  variable-length compressed signatures (up to 1423 bytes max). FALCON-DET1024 signatures can
+  be transcoded to constant-time (CT) format, which is fixed-size, but at 1538 bytes — larger
+  than FN-DSA's 1280 bytes. Fixed size simplifies everything downstream: buffer allocation,
+  network framing, storage calculations, and block capacity planning all become deterministic.
 
 ### Implementation
 
@@ -510,19 +510,14 @@ enters the picture.
   reuse vulnerability. The scheme is non-deterministic because the underlying mathematics require
   it for provable security, not because determinism was overlooked.
 
-  Pornin is currently authoring `rust-fn-dsa`, a pure Rust implementation of FN-DSA tracking
-  the NIST standard (FIPS 206). Implementing the standard faithfully is the point — it does
-  not represent a change in his views on determinism; it represents implementing a different
-  algorithm with different mathematical requirements.
-
 ---
 
 ## Falcon-DET1024 Advantages
 
 - **Already deployed** — FALCON-DET1024 has been in production in Algorand's state proof
-  infrastructure since 2022 ("Renaissance Block") and is exposed as an AVM opcode. In November
-  2025, Algorand demonstrated the first MainNet transaction authorized with Falcon signatures
-  via account abstraction — the first concrete step toward securing ledger accounts. Migration
+  infrastructure since 2022 and is exposed as an AVM opcode. In November 2025, Algorand
+  demonstrated the first MainNet transaction authorized with Falcon signatures via account
+  abstraction — the first concrete step toward securing ledger accounts. Migration
   of the full protocol stack would require substantial testing and validation effort.
 
 - **Determinism as a systemic property** — Determinism means the same input always produces
@@ -792,11 +787,12 @@ failure scenario and asked whether FN-DSA would hedge like ML-DSA: *"We hope it 
 Ray Perlner (NIST) responded: *"We welcome feedback on John Mattsson's suggestion that hedged
 signing be preferred over plain randomized signing"* — confirming NIST's direction.
 
-Thomas Pornin (Falcon's principal author) proposed a concrete FN-DSA hedging formula in the
-same thread:
+Thomas Pornin proposed a concrete FN-DSA hedging formula in the same thread:
+
 ```
 derived_seed = SHAKE256(SHAKE256(f || g)[40] || mu || rng_seed)[40]
 ```
+
 This hashes the private key polynomials `(f, g)` first, then combines with the message hash `mu`
 and fresh `rng_seed` — the same three-way structure as ML-DSA but memory-efficient for
 constrained implementations since it avoids needing the full encoded private key in memory.
@@ -949,15 +945,13 @@ native Falcon protocol accounts. Both designs apply equally to FALCON-DET1024 an
 ### Block Structure: Signature Storage
 
 Falcon signatures represent roughly a 20x increase over Ed25519's 64 bytes. FALCON-DET1024
-uses variable-length compressed signatures averaging ~1222 bytes (max ~1423 bytes) — the
-40-byte random salt of standard Falcon is replaced by a 1-byte version field, saving ~39 bytes
-on average relative to standard Falcon's ~1261-byte average. FN-DSA uses a fixed padded format
-of exactly 1280 bytes. Both are in the same range for storage purposes, but FN-DSA's fixed size
-simplifies block capacity planning. FALCON-DET1024 can also produce fixed-size CT-format
-signatures at 1538 bytes via a post-signing re-encoding step that requires no re-signing — a
-258-byte premium over FN-DSA's padded format in exchange for fixing the variable-length gap.
-A SegWit-style separation addresses both block capacity and long-term storage for either
-variant:
+uses variable-length compressed signatures averaging ~1222 bytes (maximum of 1423 bytes).
+FN-DSA uses a fixed padded formatof exactly 1280 bytes. Both are in the same range for
+storage purposes, but FN-DSA's fixed size simplifies block capacity planning. FALCON-DET1024
+can also produce fixed-size CT-format signatures at 1538 bytes via a post-signing re-encoding
+step that requires no re-signing — a 258-byte premium over FN-DSA's padded format in exchange
+for fixing the variable-length gap. A SegWit-style separation addresses both block capacity
+and long-term storage for either variant:
 
 ```
 Block {
@@ -974,12 +968,12 @@ Algorand already computes TxID from transaction fields only —
 `TxID = SHA-512/256("TX" || msgpack(tx_fields))` — with signatures carried separately in the
 `SignedTransaction` wrapper `{txn: Transaction, sig: Signature}`. TxID computation does not need
 to change for either Falcon variant. What changes is the storage and transmission cost of the
-signature bytes themselves: ~1280 bytes vs 64 bytes per transaction. The witness separation addresses that: after
-Algorand's instant BA* finality, the witness section can be pruned by most nodes. The `sig_root`
-persists permanently as proof that all signatures were valid. Anyone needing to verify a historical
-signature requests it from an archival witness node along with a Merkle inclusion proof, verifies
-the proof against the known `sig_root`, then verifies the signature against the transaction's
-sender's registered pubkey.
+signature bytes themselves: ~1280 bytes vs 64 bytes per transaction. The witness separation
+addresses that: after Algorand's instant BA* finality, the witness section can be pruned by most
+nodes. The `sig_root` persists permanently as proof that all signatures were valid. Anyone needing
+to verify a historical signature requests it from an archival witness node along with a Merkle
+inclusion proof, verifies the proof against the known `sig_root`, then verifies the signature
+against the transaction's sender's registered pubkey.
 
 Algorand's existing state proof infrastructure (vector commitments, Merkle trees) provides the
 exact tooling this requires — it is an extension of a pattern already built into the protocol.
@@ -1048,8 +1042,7 @@ threshold. Native multisig is structurally bounded by whatever schemes the proto
 at a given time; upgrading to a new scheme requires a protocol change. An LSig-based threshold
 requires only a new opcode. For multisig specifically, this is not just flexibility — it is
 the only path to scheme-agnostic threshold policies without a protocol redesign each time
-the PQ landscape advances. Migration path options and hybrid multisig design are covered in
-the [Migration Path](#migration-path-and-hybrid-period) section.
+the PQ landscape advances.
 
 ### Migration Path and Hybrid Period
 
@@ -1074,7 +1067,7 @@ corresponding application exists. A realistic migration path requires a hybrid p
    the pooled bytes budget for LSig program and arguments; resolving this friction requires
    either a protocol upgrade to increase LSig size limits or native Falcon account support.
 
-2. **Deprecation window**: announce a future block height after which Ed25519-only signatures
+2. **Deprecation window**: Announce a future block height after which Ed25519-only signatures
    will no longer be accepted for new transactions. Accounts that have not registered a Falcon
    key by that block height would need to migrate before spending.
 
@@ -1090,7 +1083,7 @@ corresponding application exists. A realistic migration path requires a hybrid p
    signatures for known application-controlled addresses. Neither is finalized; both require
    protocol changes.
 
-5. **Quantum-vulnerable account handling**: accounts that never registered a Falcon key and
+5. **Quantum-vulnerable account handling**: Accounts that never registered a Falcon key and
    whose Ed25519 private key may be at quantum risk represent the hardest migration challenge.
    This is an unsolved problem common to all blockchain PQC migrations — there is no safe way
    to migrate an account whose private key is unknown or inaccessible.
@@ -1167,48 +1160,25 @@ commitment lives, not in whether a commitment is made.
 
 **Opcode-first, then native promotion — a two-stage framework.** The debate resolves more
 cleanly as a staged path than as a binary choice. The `ecdsa_verify` opcode is the existing
-precedent: it is in production use for EVM-compatible accounts (EVM xAccounts) without ever
-having been promoted to a native account type, demonstrating that the opcode stage is
-sufficient for real production deployment. The proposed framework:
+precedent: in production use for EVM-compatible accounts without ever being promoted to a native
+account type, demonstrating the opcode stage works sufficiently as the intials step for deployment.
 
-1. *Opcode stage* — add `<pq-dsa>_verify` when the scheme meets: maturity (stable
-   specification), adoption (meaningful ecosystem use), and KMS + hardware support (signing
-   infrastructure exists beyond software-only implementations).
+1. *Opcode stage* — expose the scheme as a `<pq-dsa>_verify` AVM opcode. Developers can build
+   LSig-based accounts and production applications, the ecosystem accumulates real-world
+   experience, and no protocol-level commitment to the scheme is made. This avoids enshrining
+   a scheme before its behaviour under production conditions is well understood.
 
-2. *Native "1st class citizen" promotion* — promote to a native account type when: (a)
-   recursive LSig-delegated-LSig is not possible or too complex, making the delegated LSig
-   capability gap a real operational limitation; (b) protocol-level multisig support is needed,
-   as wallets and custodians have historically taken years to adopt native multisig even with
-   full protocol support — ARC-based standardisation is weaker; (c) the scheme passes
-   "Algorand affinity" — it is optimal for Algorand's specific throughput, latency, and
-   resource constraints, not merely mature or adopted generally.
+2. *Native promotion* — once the scheme has demonstrated maturity, broad adoption, and fit with
+   Algorand's throughput and latency constraints, promote it to a native type on the protocol
+   layer. This removes the LSig wrapper and ARC-convention requirements, gives the protocol
+   direct enforcement of the cryptographic check, and makes the scheme straightforward for
+   wallets, custody providers, and exchanges to support without custom tooling.
 
-FALCON is the current baseline under this framework. After ten years of the NIST PQ
-standardisation process, the current finalists represent the candidates that have survived
-the most rigorous public scrutiny. Among those, FALCON (both 512 and 1024 variants) is the
-best fit for Algorand — already deployed in State Proofs since 2022, already available as an
-AVM opcode, and already proven at production scale. Promoting it to a native PQ account type
-is the natural continuation of that trajectory, not a speculative bet. When the next NIST
-evaluation batch reaches maturity — anticipated 5–10 years out — the best candidate from
-that generation would be evaluated against the same Algorand affinity criteria and added to
-the native supported set if it qualifies. Schemes at earlier stages of maturity (including
-multivariate schemes recently advanced in the NIST onramp process, which offer very small
-signatures and public keys but carry higher security uncertainty) are better introduced as
-opcodes first, where developers can use them in production before any protocol-level
-commitment is made.
-
-Protocol-native PQ account types (a new sigType field) remain more robust for the baseline
-case — the protocol itself enforces the cryptographic check with no dependence on wallet
-correctness. The LSig + opcode model is more flexible but places the enforcement burden on
-wallets, explorers, and tooling rather than on the protocol layer. These are not mutually
-exclusive: a protocol-native account type can coexist with an opcode usable inside LSig
-programs, serving different use cases and migration paths simultaneously.
-
-The engineering work for the hybrid period is the critical path. Starting now allows Algorand to
-have the infrastructure ready before any quantum threat becomes concrete. Beyond protocol work,
-broader adoption depends on wallets, custody providers, exchanges, and developer tooling
-supporting PQ key generation, storage, signing, and recovery — the ecosystem coordination
-problem is at least as large as the protocol engineering problem.
+`Falcon-DET1024` is the current baseline under this framework — already deployed in State Proof
+since 2022, already available as an AVM opcode, and already proven at production scale. Promoting it
+to a native PQ account type is the natural continuation of that trajectory. Schemes at earlier
+stages of maturity are better introduced at the opcode stage first, where the ecosystem can
+evaluate them before any protocol commitment is made.
 
 ### Batch Verification Loss
 
@@ -1252,15 +1222,21 @@ fewer total verification operations per block even without batching. Mitigations
 
 Algorand's cryptographic sortition — the core, lottery mechanism that selects validators
 for its Pure Proof-of-Stake (PPoS) consensus — depends on a Verifiable Random Function
-(IETF draft-irtf-cfrg-vrf-03) randomly selecting block proposers and committee members each round. The current
-implementation is **ECVRF-ED25519-SHA512-Elligator2**, based on IETF draft-irtf-cfrg-vrf-03. 
-Algorand integrated this VRF at mainnet launch in 2019; the specification was not finalized 
-as RFC 9381 until August 2023, which is why the implementation references the earlier draft. 
-Its core operation is `Gamma = x·H`: the secret scalar multiplied by a curve point derived
-from the input. The output `beta = Hash(Gamma)` is uniquely determined and pseudorandom
-because discrete log makes `Gamma` indistinguishable from a random curve point. All valid
-proofs for the same (SK, input) converge on the same `beta` — enforced algebraically and
-strengthened by an additional check: Algorand's verification explicitly rejects any proof
+(VRF) randomly selecting block proposers and committee members each round. The current
+implementation is a tailored variant of **ECVRF-ED25519-SHA512-Elligator2**, closely aligned
+with but predating [RFC 9381](https://www.rfc-editor.org/rfc/rfc9381) (Goldberg, Reyzin,
+Papadopoulos, Vcelak — IRTF, August 2023). Algorand built this into the protocol in 2018–2019
+against the earlier draft (draft-irtf-cfrg-vrf-03) and curtailed the broader standard in
+several ways for high-throughput ledger performance: parameters are hardcoded for the consensus
+engine rather than kept general, the hash-to-curve step uses a custom try-and-increment loop
+optimised for Ed25519 rather than the full IETF suite, and the proof byte layout is trimmed
+to fit the AVM's `vrf_verify` opcode budget. The result is a VRF that is functionally
+equivalent to the IETF construction for Algorand's purposes but is not a drop-in implementation
+of RFC 9381. Its core operation is `Gamma = x·H`: the secret scalar multiplied by a curve
+point derived from the input. The output `beta = Hash(Gamma)` is uniquely determined and
+pseudorandom because discrete log makes `Gamma` indistinguishable from a random curve point.
+All valid proofs for the same (SK, input) converge on the same `beta` — enforced algebraically
+and strengthened by an additional check: Algorand's verification explicitly rejects any proof
 where `Gamma` is not on the main elliptic curve subgroup or is of low order, preventing
 subgroup-confinement attacks that have no equivalent safeguard in the Falcon norm check.
 
@@ -1296,13 +1272,12 @@ call. In both cases the property does not hold against a determined adversary.
 
 Lattice-based VRF constructions face their own distinct limitation. *Practical Post-Quantum
 Few-Time VRF* (FC 2021, improved CRYPTO 2023) is the leading practical lattice-based candidate,
-but it can generate
-only **one output per key pair** — requiring full key rotation after every evaluation. For
-blockchain consensus where validators evaluate the VRF every block, this is operationally
-impractical. This constraint is not a parameter choice; it is structural to the lattice-based
-construction. It confirms that the lattice path to a PQ VRF has fundamental obstacles beyond
-the Falcon-specific issues analysed above, and explains why hash-based constructions have
-become the primary research direction.
+but it can generate only **one output per key pair** — requiring full key rotation after every
+evaluation. For blockchain consensus where validators evaluate the VRF every block, this is
+operationally impractical. This constraint is not a parameter choice; it is structural to the
+lattice-based construction. It confirms that the lattice path to a PQ VRF has fundamental
+obstacles beyond the Falcon-specific issues analysed above, and explains why hash-based
+constructions have become the more immediate research direction.
 
 Hash-based constructions sidestep the lattice difficulties entirely. Rather than scalar
 multiplication on a curve, the VRF output becomes a purely hash-based evaluation:
@@ -1360,11 +1335,11 @@ the output. Algorand's design significantly mitigates the practical risk — cry
 self-selection means a participant reveals their selection at the exact moment they broadcast
 their vote, so by the time an adversary learns who was chosen, the participant has already
 acted. Sub-3-second finality leaves no practical window for targeted interference. However,
-the exposure is not zero, and Ring VRFs eliminate it entirely rather than relying on timing. *Lattice-based Ring Verifiable Random Functions* (IACR ePrint
-2026/772, Xu, Esgin, Steinfeld — Monash University, 2026) formalises Ring VRFs, where a
-member of a public key ring proves a valid VRF output was produced by some ring member
-without revealing which one. The paper explicitly cites Algorand's sortition as the motivating
-application.
+the exposure is not zero, and Ring VRFs eliminate it entirely rather than relying on timing.
+*Lattice-based Ring Verifiable Random Functions* (IACR ePrint 2026/772, Xu, Esgin, Steinfeld
+— Monash University, 2026) formalises Ring VRFs, where a member of a public key ring proves
+a valid VRF output was produced by some ring member without revealing which one.
+The paper explicitly cites Algorand's sortition as the motivating application.
 
 Two lattice-based instantiations are provided: **RVRF[LaV]** using the long-term lattice VRF
 LaV (CRYPTO 2023, unlimited evaluations per key, base proof ~10.27 KB) and **RVRF[LB-VRF]**
@@ -1404,15 +1379,24 @@ LaBRADOR aggregation track and the STARK compression track.
 
 **AVM integration — opcode cost.** The existing `vrf_verify` opcode takes three stack inputs
 — message (variable), proof (80 bytes fixed), public key (32 bytes) — and returns a 64-byte
-VRF output plus a boolean. Its cost is 5,700 AVM units, one of the most expensive opcodes,
-because ECVRF-ED25519 involves elliptic curve scalar multiplications. A `pq_vrf_verify`
-opcode for a hash-based scheme would be significantly cheaper: XM-VRF verification is
-entirely SHA-256-based, and SHA-256 runs 100–200x faster than an EC scalar multiplication.
-A native opcode would likely land in the **1,000–2,000 unit range** — the overhead shifts
-from computation to data. A randomness beacon migrating from ECVRF to a hash-based PQ scheme
-requires all three layers to update simultaneously: the protocol (new opcode via consensus
-upgrade), the off-chain oracle (switch from ECVRF to XM-VRF proof generation), and any
-smart contracts using the beacon. Immutable contracts that cannot be upgraded remain
+VRF output plus a boolean. Its opcode cost is 5,700 AVM compute units, one of the most
+expensive opcodes, because ECVRF-ED25519 involves elliptic curve scalar multiplications.
+A `pq_vrf_verify` opcode for a hash-based scheme would be significantly cheaper: XM-VRF
+verification is entirely hash-based, and SHA-256 runs 100–200x faster than an EC scalar
+multiplication — a native opcode would likely land in the **1,000–2,000 unit range**, shifting
+the overhead from computation to data. SHA-256 is the natural choice for XM-VRF in this
+context for three compounding reasons: modern server and consumer CPUs carry dedicated
+SHA-256 silicon (Intel SHA Extensions, ARMv8 Cryptography Extensions), making it faster in
+practice than software-optimised alternatives like BLAKE3; proof size scales directly with
+hash output width, so SHA-256's 32-byte nodes keep authentication paths roughly half the size
+of SHA-512's 64-byte nodes — directly relevant to Algorand's block space constraints; and
+SHA-256 delivers exactly 128 bits of post-quantum security against Grover's algorithm, which
+is the accepted target for the foreseeable future. XM-VRF is algorithm-agnostic and would
+function correctly with any collision-resistant hash, but SHA-256 is the optimal choice on
+all three axes simultaneously. A randomness beacon migrating from ECVRF to a hash-based PQ
+scheme requires all three layers to update simultaneously: the protocol (new opcode via
+consensus upgrade), the off-chain oracle (switch from ECVRF to XM-VRF proof generation),
+and any smart contracts using the beacon. Immutable contracts that cannot be upgraded remain
 permanently tied to `vrf_verify`.
 
 | Parameter | Current `vrf_verify` | Estimated `pq_vrf_verify` |
@@ -1908,9 +1892,9 @@ constructions.
 
 *Near-term (now to ~5 years):* hash-based VRF is the practical choice. Hash-based
 constructions such as XM-VRF (IACR ePrint 2026/052) satisfy all five VRF criteria, produce
-proofs of ~1.9–5.5 KB, and can be verified using existing AVM hash primitives — no new
-arithmetic opcodes required. Critically, a hash-based VRF does not expand the consensus trust
-surface: Algorand's protocol already assumes hash collision resistance throughout, so adding
+proofs of ~1.9–5.5 KB (or even lower), and can be verified using existing AVM hash primitives
+— no new arithmetic opcodes required. Critically, a hash-based VRF does not expand the consensus
+trust surface: Algorand's protocol already assumes hash collision resistance throughout, so adding
 a hash-based VRF introduces no new hardness assumption to the sortition layer. Lattice-based
 alternatives require SIS/LWE hardness as an additional assumption specifically in the
 consensus hot path — a less conservative position for the most sensitive protocol component.
