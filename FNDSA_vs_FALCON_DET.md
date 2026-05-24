@@ -1256,14 +1256,17 @@ Neither Falcon variant satisfies all five:
 | Verifiability | ✓ — ring equation and norm check hold; verification well-defined | ✓ — verification well-defined for any valid signature |
 | Determinism | ✓ — nonce derived from SK and input; same (SK, alpha) always yields same beta | ✗ — random nonce produces different output each call; enables rank grinding |
 | Uniqueness | ✗ — norm check `\|\|(s1,s2)\|\|² ≤ β` admits multiple valid short vectors with different hashes | ✗ — same structural flaw, compounded by non-determinism |
-| Pseudorandomness | ✗ — deterministic sampling breaks the GPV/Rényi argument; heuristic only | ✓ (classically) — Paper 2024/1769 proves indistinguishability under SIS/NTRU; QROM open |
+| Pseudorandomness | ✗ — deterministic sampling breaks the GPV/Rényi argument; heuristic only | ✗ — Paper 2024/1769 proves EUF-CMA (unforgeability), not VRF pseudorandomness; no published proof shows H(σ) is indistinguishable from random given VK |
 | Total Ordering | ✗ — uniqueness failure lets malicious validators mine alternative short vectors for better rank | ✗ — non-determinism directly enables rank grinding |
 
-The split mirrors the document's central tension: FALCON-DET1024 satisfies determinism but
-lacks the formal pseudorandomness proof; FN-DSA has the proof but lacks determinism. Both fail
-uniqueness for the same structural reason — Falcon's norm check `||(s1, s2)||² ≤ β` is an
-inequality admitting multiple valid short vector solutions for the same syndrome, whereas
-ECVRF's `Gamma = x·H` is algebraically rigid with exactly one solution for any given `(x, H)`.
+Both variants fail pseudorandomness, for different reasons. FALCON-DET1024 because deterministic
+sampling breaks the GPV/Rényi argument the security proof depends on — heuristic only. FN-DSA
+because Paper 2024/1769 proves EUF-CMA (unforgeability), which is a distinct property from VRF
+pseudorandomness: no published proof shows that H(σ_FN-DSA) is computationally indistinguishable
+from random given VK. Both fail uniqueness for the same structural reason — Falcon's norm check
+`||(s1, s2)||² ≤ β` is an inequality admitting multiple valid short vector solutions for the
+same syndrome, whereas ECVRF's `Gamma = x·H` is algebraically rigid with exactly one solution
+for any given `(x, H)`.
 For FALCON-DET1024 the uniqueness failure is not a trivial exploit: a malicious validator would
 need to implement non-deterministic Falcon sampling with different randomness to enumerate
 alternative short vectors, bypassing the deterministic signing API entirely. For FN-DSA the
@@ -1310,23 +1313,31 @@ per block (~8% of Algorand's 10 MB block size).
 
 *Key Updatable Hash Based VRF* (IACR ePrint 2026/052)
 significantly improves this by replacing ZKBoo with an XMSS-based construction. The proof
-— `d WOTS+ signatures + d XMSS authentication paths` — drops to roughly **5–6 KB** for typical
-parameters (d=2 layers, h=40, l=67, λ=256 bits), a ~25–45x reduction. The paper presents two
-constructions: a general d-layer framework and a simplified 2-layer version (d=2) targeted
-specifically at Algorand's committee selection, where each user evaluates
+— `d WOTS+ signatures + d XMSS authentication paths` — is `2(l + h/d) × λ/8` bytes. The
+paper presents two constructions: a general d-layer framework and a simplified 2-layer version
+(d=2) targeted specifically at Algorand's committee selection, where each user evaluates
 `(y, π) ← XM-VRF.Eval(sk, Q)`, checks `y ∈ [0, P]` against their stake-proportional
 threshold, and broadcasts if selected. Beyond proof size, XM-VRF introduces key updatability
-(the secret key auto-updates after each evaluation via a forward-secure stateful PRG),
-faster key generation via multi-layer XMSS trees, and supports up to **2^80 outputs** from a
-single key pair — effectively unbounded for any blockchain deployment. The paper also patches
-a 2025 attack — *Breaking X-VRF* (FC 2025) — that broke uniqueness in the predecessor
-scheme by exploiting a WOTS+ flaw.
+(the secret key auto-updates after each evaluation via a forward-secure stateful PRG) and
+faster key generation via multi-layer XMSS trees. The paper also patches a 2025 attack —
+*Breaking X-VRF* (FC 2025) — that broke uniqueness in the predecessor scheme by exploiting
+a WOTS+ flaw.
 
-One practical deployment concern: a counter `ctr` tracking the current XMSS leaf index is
-embedded in the public parameters and must be maintained across all evaluations. If a validator
-node crashes and restores from a stale backup, it could reuse a WOTS+ one-time key — WOTS+ is
-designed for single use, and reuse could violate the uniqueness property. State persistence and
-crash recovery under this constraint are not addressed in the paper.
+The Algorand-targeted implementation (N=32, W=16, L=67, H=22, D=2) produces
+**4,996-byte proofs** and supports **2^22 = 4,194,304 evaluations** (~137 days at 2.82s/block)
+from a single key pair. Keygen takes ~3.57s (vs 240–360s for ECVRF's 30-day key),
+eval ~1.4ms, verify ~700µs. Key lifetime is bounded by H, not unbounded; the paper's general
+framework supports larger H at proportionally larger proof cost.
+
+One deployment concern: a counter `ctr` tracking the current XMSS leaf index must be
+maintained across all evaluations. If a validator node crashes and restores from a stale
+backup, it could reuse a WOTS+ one-time key — WOTS+ is designed for single use, and reuse
+could violate the uniqueness property. For the Algorand-specific deployment this is resolved
+without new ledger state: the expected leaf is `expected_ctr = current_round - VoteFirstValid`,
+derivable by any verifier from the existing keyreg fields. A proof with the wrong counter is
+rejected; a validator cannot choose a different leaf for a given round. State rollback
+grinding — signing the same round from multiple leaf positions — is closed by the math rather
+than by an honour system or hardware enclave.
 
 **Lattice-based Ring VRFs — anonymity ECVRF cannot provide.** A separate research direction
 addresses an identity exposure property that hash-based constructions above do not eliminate:
@@ -1402,8 +1413,8 @@ permanently tied to `vrf_verify`.
 | Parameter | Current `vrf_verify` | Estimated `pq_vrf_verify` |
 |---|---|---|
 | Standard | VrfAlgorand (ECVRF-ED25519-SHA512-Elligator2, draft-irtf-cfrg-vrf-03) | XM-VRF or equivalent hash-based scheme |
-| Proof input (B) | 80 bytes (fixed) | 1.3–5.5 KB (parameter-dependent; see below) |
-| Public key input (C) | 32 bytes | ~96 bytes (vk core; bitmasks standardised at protocol level) |
+| Proof input (B) | 80 bytes (fixed) | 4,996 bytes (Algorand-targeted: N=32, W=16, L=67, H=22, D=2; parameter-dependent, see below) |
+| Public key input (C) | 32 bytes | 64 bytes (`root \|\| chain_key`) |
 | VRF output (X) | 64 bytes | 32–64 bytes (hash output) |
 | Opcode cost | 5,700 | ~1,000–2,000 (estimated) |
 | Min. app calls (opcode budget) | 9 (9 × 700 = 6,300 ≥ 5,700) | 2–3 (estimated) |
@@ -1420,14 +1431,17 @@ efficiency examples use n=40, l=10, d=4. At λ=256 bits (32 bytes per string):
 | l=10, h=40, d=2, λ=256b | 2(10+20)×32 = **1,920 bytes** | ✓ |
 | l=10, h=40, d=4, λ=128b | 4(10+10)×16 = **1,280 bytes** | ✓ |
 | l=67, h=40, d=2, λ=256b | 2(67+20)×32 = **5,568 bytes** | ✗ |
+| **l=67, h=22, d=2, λ=256b** | **2(67+11)×32+4 = 4,996 bytes** (Algorand-targeted) | ✗ (exceeds 4,096-byte stack limit; box storage required) |
 
 The value of l depends on the WOTS+ message length m and Winternitz parameter w
 (l = l1 + l2 where l1 = ⌈m/log w⌉). The paper consistently uses l=10 in examples,
 which corresponds to signing a 32-bit message with w=16 — suggesting the VRF input is
 hashed down before WOTS+ signing. With that parameterization and d=2, the proof is
 approximately **1.9 KB** and fits within a single app call's 2,048-byte argument budget.
-With l=67 (standard WOTS+ for a 256-bit input, m=256, w=16), the proof reaches 5.5 KB
-and requires box storage or multi-call chunking.
+With l=67 (standard WOTS+ for a 256-bit input, m=256, w=16) and the paper's reference h=40,
+the proof reaches 5,568 bytes. The Algorand-targeted implementation uses h=22, giving
+**4,996 bytes** — still exceeding both the 4,096-byte stack variable limit and the 2,048-byte
+per-call argument limit, so box storage or sub-component chunking is required regardless.
 
 **Proof delivery — AVM size constraints.** Two AVM limits apply independently: a 4,096-byte
 maximum for any stack variable, and a 2,048-byte maximum for combined arguments per
@@ -1449,11 +1463,12 @@ calls using `gload` (which lets a transaction read another transaction's scratch
 the same group): one call passes the first 2,048 bytes, a second call passes the remaining
 ~512 bytes, and the verifier concatenates and calls `pq_vrf_verify`. Three app calls total.
 
-*Without box storage, if proof ~5.5 KB (l=67, d=2):* individual WOTS+ signatures (2,144
-bytes) exceed the per-call argument limit, and the full proof exceeds the 4,096-byte stack
-variable limit. Chunking is required at the sub-component level across 5 app calls using
+*Without box storage, if proof ~4,996–5,568 bytes (l=67, d=2, h=22 or h=40):* the full
+proof exceeds both the 4,096-byte stack variable limit and the 2,048-byte per-call argument
+limit. Individual WOTS+ signatures are 2,144 bytes (67×32) and auth paths 352 bytes (11×32
+per layer at h=22). Chunking is required at the sub-component level across 5 app calls using
 `gload`, with the opcode accepting σ1, Auth1, σ2, Auth2 as separate stack values rather
-than a concatenated blob.
+than a concatenated blob. This is the path required for the Algorand-targeted 4,996-byte proof.
 
 **Backwards compatibility.** The existing `vrf_verify` is hardcoded to verify 80-byte ECVRF
 proofs — it cannot verify XM-VRF proofs. Smart contracts using the randomness beacon must
@@ -1475,9 +1490,13 @@ for the transition:
 For near-term deployment, hash-based wins on every practical axis. XM-VRF satisfies all
 five VRF criteria, is explicitly designed and benchmarked for Algorand's sortition by two
 independent research groups, and rests on the most conservative post-quantum assumption
-available — hash function collision resistance. Proof sizes are in the 1.3–5.5 KB range
-depending on parameter choices, manageable within AVM constraints. The statefulness concern
-(the `ctr` counter) is a real operational engineering challenge, but not a cryptographic one.
+available — hash function collision resistance. The Algorand-targeted parameter set (N=32,
+W=16, L=67, H=22, D=2) produces 4,996-byte proofs; box storage or 5-call chunking is
+required for AVM delivery, but verification itself is cheap (~700µs, entirely hash-based).
+The statefulness concern (the `ctr` counter) is a real operational engineering challenge for
+general deployments, but is closed in the Algorand context: the expected counter is
+`current_round - VoteFirstValid`, derivable by any verifier from existing keyreg fields with
+no new ledger state.
 
 For the long-term, lattice-based Ring VRFs represent a more compelling vision. Algorand's
 current ECVRF has an identity exposure property that hash-based VRFs inherit: broadcasting a
@@ -1809,7 +1828,7 @@ It is further from the proven framework than even standard unmodified Falcon.
 | Transaction signing | FN-DSA/1024 | No SNARK constraint, no RNG constraint in Algorand's architecture (off-chain signing, AVM verification-only); all FN-DSA advantages apply cleanly — formal proof, pk binding, fixed signatures, no "Do Not Disturb" exposure, NIST standard |
 | State proof signing | FALCON-DET1024 | Two-condition SNARK requirement: shared digest across all signers requires both no random salt and no public key binding — structurally incompatible with FN-DSA; no configuration of FN-DSA achieves this without abandoning core security properties |
 | Ephemeral consensus keys | Either (Qs≈1, security loss argument collapses) | Operational preference |
-| VRF / cryptographic sortition | Neither directly — hash-based candidates emerging | Of the five VRF criteria, FALCON-DET1024 meets only determinism; FN-DSA meets only pseudorandomness. Both fail uniqueness. Lattice-based VRF candidates (Esgin et al. LB-VRF) face a separate structural limit of one output per key pair. Hash-based constructions (XM-VRF, IACR ePrint 2026/052) satisfy all five criteria with ~5–6 KB proofs and 2^80 outputs per key pair, but are not yet standardised or production-ready |
+| VRF / cryptographic sortition | Neither directly — hash-based candidates emerging | Of the five VRF criteria, FALCON-DET1024 meets verifiability and determinism only; FN-DSA meets verifiability only. Both fail uniqueness and pseudorandomness — Paper 2024/1769 proves EUF-CMA for FN-DSA, not VRF pseudorandomness, which is a distinct property. Lattice-based VRF candidates (Esgin et al. LB-VRF) face a separate structural limit of one output per key pair. Hash-based constructions (XM-VRF, IACR ePrint 2026/052) satisfy all five criteria with ~5–6 KB proofs and 2^80 outputs per key pair, but are not yet standardised or production-ready |
 
 ---
 
